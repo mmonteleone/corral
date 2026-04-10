@@ -129,7 +129,7 @@ detect_arch() {
 
 # Prepend the llama.cpp current/ bin dir to PATH if it is not already there.
 ensure_llama_in_path() {
-  local install_root="${1:-${YALLAMA_INSTALL_ROOT:-$DEFAULT_INSTALL_ROOT}}"
+  local install_root="${YALLAMA_INSTALL_ROOT:-$DEFAULT_INSTALL_ROOT}"
   install_root="${install_root/#\~/$HOME}"
   local current_link="${install_root}/current"
   if [[ -d "$current_link" ]] && [[ ":$PATH:" != *":${current_link}:"* ]]; then
