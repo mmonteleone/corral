@@ -6,7 +6,8 @@ Run local models with the ease of [Ollama](https://ollama.com) and the power of 
 
 ## Why use it?
 
-- Upstream llama.cpp, with all the benefits of its recent perf improvements and latest model support (*ahem*, [Gemma 4](https://deepmind.google/models/gemma/gemma-4/))
+- Same ergonomics as Ollama for lazy people like me, including ease of running *and* managing local models
+- Upstream, official, llama.cpp with all its perf benefits and model support (*ahem*, [Gemma 4](https://deepmind.google/models/gemma/gemma-4/)) vs downstream integrations and forks
 - Broad Hugging Face model registry, not easily reached through Ollama
 - Built-in chat UI and OpenAI API endpoint compatibility thanks to `llama-server`
 - Command and model shell completions for fish, zsh, and bash
