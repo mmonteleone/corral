@@ -682,3 +682,237 @@ cmd_prune() {
   done
   echo "Done."
 }
+
+# ── pull ──────────────────────────────────────────────────────────────────────
+
+cmd_pull_usage() {
+  cat <<EOF
+Usage: $SCRIPT_NAME pull <MODEL_NAME[:QUANT]>
+
+Arguments:
+  MODEL_NAME    HuggingFace model identifier, e.g. unsloth/gemma-4-26B-A4B-it-GGUF
+  QUANT         Optional quant tag to download a specific variant (e.g. Q4_K_M, UD-Q6_K).
+
+Downloads (pre-warms) a HuggingFace model into the local cache without running it.
+EOF
+}
+
+cmd_pull() {
+  if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
+    cmd_pull_usage
+    [[ $# -eq 0 ]] && return 1 || return 0
+  fi
+
+  local model_spec="$1"
+  _parse_model_spec "$model_spec"
+  local model_name="$REPLY_MODEL"
+  local quant="$REPLY_QUANT"
+  local cache_dir
+  cache_dir="$(model_name_to_cache_dir "$model_name")"
+  ensure_llama_in_path
+  require_cmds llama-cli
+
+  if cache_has_model_or_quant "$cache_dir" "$quant"; then
+    echo "Model already cached: $model_spec"
+    echo "  $cache_dir"
+    return 0
+  fi
+
+  echo "Pulling model: $model_spec"
+  # Force a non-conversation single turn with a non-empty placeholder prompt so
+  # llama-cli downloads into the HF cache and exits instead of entering chat
+  # mode on models that advertise a chat template by default.
+  local hf_token="${HF_TOKEN:-${HF_HUB_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-}}}"
+  local hf_args=()
+  [[ -n "$hf_token" ]] && hf_args=(--hf-token "$hf_token")
+  local pull_status=0
+  llama-cli -hf "$model_spec" "${hf_args[@]+"${hf_args[@]}"}" --no-conversation --single-turn --prompt ' ' --no-display-prompt -n 0 </dev/null || pull_status=$?
+
+  if cache_has_model_or_quant "$cache_dir" "$quant"; then
+    echo "Done: $model_spec"
+    return 0
+  fi
+
+  if [[ $pull_status -ne 0 ]]; then
+    die "pull failed for '${model_spec}' (llama-cli exit ${pull_status}); expected cache dir was not created: ${cache_dir}"
+  fi
+
+  if [[ -z "$quant" ]]; then
+    die "pull did not create the expected cache dir: ${cache_dir}"
+  fi
+
+  die "pull did not cache requested quant '${quant}' for model '${model_name}' (cache dir: ${cache_dir})"
+}
+
+# ── run ───────────────────────────────────────────────────────────────────────
+
+cmd_run_usage() {
+  cat <<EOF
+Usage: $SCRIPT_NAME run <MODEL_NAME|PROFILE> [-- <llama-cli args...>]
+
+Arguments:
+  MODEL_NAME    HuggingFace model identifier, e.g. unsloth/gemma-4-26B-A4B-it-GGUF
+  PROFILE       A saved profile name (see: $SCRIPT_NAME profile list)
+
+Downloads the model if needed and runs it interactively via llama-cli.
+When a profile is given, its model and flags are used automatically.
+
+Pass additional llama-cli arguments after '--'. These are appended after any
+profile flags and will override profile flags when the same flag appears twice.
+Example:
+  $SCRIPT_NAME run unsloth/gemma-4-E4B-it-GGUF -- -ngl 999 -c 8192
+  $SCRIPT_NAME run coder
+  $SCRIPT_NAME run coder -- --temp 0.5
+EOF
+}
+
+cmd_run() {
+  if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
+    cmd_run_usage
+    [[ $# -eq 0 ]] && return 1 || return 0
+  fi
+
+  local model_spec="$1"
+  shift
+  local extra_args=()
+  if [[ $# -gt 0 ]]; then
+    if [[ "$1" != "--" ]]; then
+      echo "Unknown argument: $1" >&2
+      cmd_run_usage >&2
+      return 1
+    fi
+    shift
+    extra_args=("$@")
+  fi
+
+  # If the spec has no '/', treat it as a profile name.
+  local profile_args=()
+  if [[ "$model_spec" != */* ]]; then
+    _load_profile "$model_spec" run
+    model_spec="$REPLY_PROFILE_MODEL"
+    profile_args=("${REPLY_PROFILE_ARGS[@]+"${REPLY_PROFILE_ARGS[@]}"}")
+  fi
+
+  ensure_llama_in_path
+  require_cmds llama-cli
+  local hf_token="${HF_TOKEN:-${HF_HUB_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-}}}"
+  local hf_args=()
+  [[ -n "$hf_token" ]] && hf_args=(--hf-token "$hf_token")
+  exec llama-cli -hf "$model_spec" "${hf_args[@]+"${hf_args[@]}"}" \
+    "${profile_args[@]+"${profile_args[@]}"}" \
+    "${extra_args[@]+"${extra_args[@]}"}"
+}
+
+# ── serve ─────────────────────────────────────────────────────────────────────
+
+cmd_serve_usage() {
+  cat <<EOF
+Usage: $SCRIPT_NAME serve <MODEL_NAME|PROFILE> [-- <llama-server args...>]
+
+Arguments:
+  MODEL_NAME    HuggingFace model identifier, e.g. unsloth/gemma-4-26B-A4B-it-GGUF
+  PROFILE       A saved profile name (see: $SCRIPT_NAME profile list)
+
+Downloads the model if needed and serves it via llama-server with Jinja templates.
+When a profile is given, its model and flags are used automatically.
+
+Pass additional llama-server arguments after '--'. These are appended after any
+profile flags and will override profile flags when the same flag appears twice.
+Example:
+  $SCRIPT_NAME serve unsloth/gemma-4-E4B-it-GGUF -- --port 8081
+  $SCRIPT_NAME serve coder
+  $SCRIPT_NAME serve coder -- --port 8081
+EOF
+}
+
+cmd_serve() {
+  if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
+    cmd_serve_usage
+    [[ $# -eq 0 ]] && return 1 || return 0
+  fi
+
+  local model_spec="$1"
+  shift
+  local extra_args=()
+  if [[ $# -gt 0 ]]; then
+    if [[ "$1" != "--" ]]; then
+      echo "Unknown argument: $1" >&2
+      cmd_serve_usage >&2
+      return 1
+    fi
+    shift
+    extra_args=("$@")
+  fi
+
+  # If the spec has no '/', treat it as a profile name.
+  local profile_args=()
+  if [[ "$model_spec" != */* ]]; then
+    _load_profile "$model_spec" serve
+    model_spec="$REPLY_PROFILE_MODEL"
+    profile_args=("${REPLY_PROFILE_ARGS[@]+"${REPLY_PROFILE_ARGS[@]}"}")
+  fi
+
+  ensure_llama_in_path
+  require_cmds llama-server
+  local hf_token="${HF_TOKEN:-${HF_HUB_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-}}}"
+  local hf_args=()
+  [[ -n "$hf_token" ]] && hf_args=(--hf-token "$hf_token")
+  exec llama-server -hf "$model_spec" --jinja \
+    "${hf_args[@]+"${hf_args[@]}"}" \
+    "${profile_args[@]+"${profile_args[@]}"}" \
+    "${extra_args[@]+"${extra_args[@]}"}"
+}
+
+# ── ps ────────────────────────────────────────────────────────────────────────
+
+cmd_ps() {
+  local ps_output
+  ps_output="$({ ps -eo pid=,comm=,args= -ww 2>/dev/null || ps -ax -o pid=,comm=,args= -ww 2>/dev/null; } | awk '
+    {
+      pid = $1
+      proc = $2
+      args = $0
+
+      if (proc !~ /(^|\/)llama-(cli|server)$/ && args !~ /(^|[[:space:]])llama-(cli|server)([[:space:]]|$)/) {
+        next
+      }
+
+      model = "(unknown)"
+      port = "-"
+
+      for (i = 3; i <= NF; i++) {
+        if (($i == "-hf" || $i == "--hf") && i < NF) {
+          model = $(i + 1)
+        } else if (($i == "-p" || $i == "--port") && i < NF) {
+          port = $(i + 1)
+        } else if ($i ~ /^--port=/) {
+          split($i, parts, "=")
+          port = parts[2]
+        } else if ($i ~ /^-p[0-9]+$/) {
+          port = substr($i, 3)
+        }
+      }
+
+      sub(/^.*\//, "", proc)
+      if (proc != "llama-server") {
+        port = "-"
+      } else if (port == "-") {
+        port = "8080"
+      }
+
+      printf "%s\t%s\t%s\t%s\n", pid, proc, port, model
+    }
+  ')"
+
+  if [[ -z "$ps_output" ]]; then
+    echo "No llama-cli or llama-server processes running."
+    return 0
+  fi
+
+  printf '%-8s  %-14s  %-10s  %s\n' 'PID' 'PROCESS' 'PORT' 'MODEL'
+  printf '%-8s  %-14s  %-10s  %s\n' '---' '-------' '----' '-----'
+
+  while IFS=$'\t' read -r pid proc port model; do
+    printf '%-8s  %-14s  %-10s  %s\n' "$pid" "$proc" "$port" "$model"
+  done <<< "$ps_output"
+}

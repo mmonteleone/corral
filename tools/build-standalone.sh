@@ -6,6 +6,7 @@ TEMPLATE_PATH="${ROOT_DIR}/yallama"
 DEFAULT_OUTPUT_PATH="${ROOT_DIR}/dist/yallama"
 
 MODULES=(
+  "lib/yallama-helpers.sh"
   "lib/yallama-cache.sh"
   "lib/yallama-profiles.sh"
   "lib/yallama-runtime.sh"

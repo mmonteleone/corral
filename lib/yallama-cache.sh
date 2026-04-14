@@ -253,3 +253,204 @@ quant_is_in_use() {
     fi
   done < <(_find_cached_gguf_paths_by_quant "$cache_dir" "$quant")
 }
+
+# ── list ──────────────────────────────────────────────────────────────────────
+
+cmd_list_usage() {
+  cat <<EOF
+Usage: $SCRIPT_NAME list [--quiet] [--json]
+       $SCRIPT_NAME ls   [--quiet] [--json]
+
+Lists cached HuggingFace models. For GGUF models, each downloaded quant
+variant is shown as a separate row (e.g. user/model:Q4_K_M).
+
+Options:
+  --quiet   Print only model[:quant] identifiers, one per line. Useful for piping.
+  --json    Output as a JSON array with 'name', 'quant', and 'size' fields.
+EOF
+}
+
+cmd_list() {
+  local QUIET="false"
+  local JSON="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --quiet)   QUIET="true"; shift ;;
+      --json)    JSON="true"; shift ;;
+      -h|--help) cmd_list_usage; return 0 ;;
+      *)         echo "Unknown argument: $1" >&2; cmd_list_usage >&2; return 1 ;;
+    esac
+  done
+
+  if [[ ! -d "$HF_HUB_DIR" ]]; then
+    if [[ "$JSON" == "true" ]]; then
+      echo "[]"
+    else
+      echo "No models found (${HF_HUB_DIR} does not exist)."
+    fi
+    return 0
+  fi
+
+  local found=0
+  local entries=()
+  local entry
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    entries+=("$entry")
+    found=1
+  done < <(collect_cached_model_entries)
+
+  if [[ "$found" -eq 0 ]]; then
+    if [[ "$JSON" == "true" ]]; then
+      echo "[]"
+    else
+      echo "No models found."
+    fi
+    return 0
+  fi
+
+  if [[ "$JSON" == "true" ]]; then
+    printf '%s\n' "${entries[@]}" \
+      | jq -R 'split("|") | {name: .[0], quant: (if .[1] == "" then null else .[1] end), size: .[2]}' \
+      | jq -s '.'
+  elif [[ "$QUIET" == "true" ]]; then
+    local e
+    for e in "${entries[@]}"; do
+      local name quant
+      name="${e%%|*}"
+      local rest="${e#*|}"
+      quant="${rest%%|*}"
+      if [[ -n "$quant" ]]; then
+        echo "${name}:${quant}"
+      else
+        echo "$name"
+      fi
+    done
+  else
+    printf '%-55s  %s\n' "MODEL" "SIZE"
+    printf '%-55s  %s\n' "-----" "----"
+    local e
+    for e in "${entries[@]}"; do
+      local name quant size display_name
+      name="${e%%|*}"
+      local rest="${e#*|}"
+      quant="${rest%%|*}"
+      size="${rest#*|}"
+      if [[ -n "$quant" ]]; then
+        display_name="${name}:${quant}"
+      else
+        display_name="$name"
+      fi
+      printf '%-55s  %s\n' "$display_name" "$size"
+    done
+  fi
+}
+
+# ── remove ────────────────────────────────────────────────────────────────────
+
+cmd_remove_usage() {
+  cat <<EOF
+Usage: $SCRIPT_NAME remove <MODEL_NAME>[:<QUANT>] [--force]
+       $SCRIPT_NAME rm <MODEL_NAME>[:<QUANT>] [--force]
+
+Arguments:
+  MODEL_NAME    HuggingFace model identifier, e.g. unsloth/gemma-4-26B-A4B-it-GGUF
+  QUANT         Optional quant tag to remove only a specific variant
+                (e.g. Q4_K_M, UD-Q6_K). Without it, the entire model is removed.
+
+Use '$SCRIPT_NAME list' to see available quant tags.
+
+Deletes the locally cached model or quant variant. Refuses if the model is
+currently in use by llama-cli or llama-server.
+
+Options:
+  --force       Skip the confirmation prompt.
+EOF
+}
+
+cmd_remove() {
+  if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
+    cmd_remove_usage
+    [[ $# -eq 0 ]] && return 1 || return 0
+  fi
+
+  local model_spec="$1"
+  local force="false"
+  shift
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force)   force="true"; shift ;;
+      -h|--help) cmd_remove_usage; return 0 ;;
+      *)         echo "Unknown argument: $1" >&2; cmd_remove_usage >&2; return 1 ;;
+    esac
+  done
+
+  local model_name quant
+  _parse_model_spec "$model_spec"
+  model_name="$REPLY_MODEL"
+  quant="$REPLY_QUANT"
+
+  local cache_dir
+  cache_dir="$(model_name_to_cache_dir "$model_name")"
+
+  if [[ ! -d "$cache_dir" ]]; then
+    die "model not found: ${model_name} (expected at ${cache_dir})"
+  fi
+
+  if [[ -n "$quant" ]]; then
+    local matching_files
+    matching_files="$(_find_gguf_by_quant "$cache_dir" "$quant")"
+    if [[ -z "$matching_files" ]]; then
+      die "no cached files matching quant '${quant}' found for model '${model_name}'"
+    fi
+
+    quant_is_in_use "$cache_dir" "$model_name" "$quant"
+
+    confirm_destructive_action "removing quant '${quant}' from '${model_name}'" "$force" || return 1
+
+    echo "Removing quant: ${model_name}:${quant}"
+    _remove_quant_files "$cache_dir" "$quant"
+
+    local remaining
+    remaining="$(_find_cached_gguf_files "$cache_dir")"
+    if [[ -z "$remaining" ]]; then
+      echo "No remaining quants. Removing model cache."
+      rm -rf "$cache_dir"
+    fi
+    echo "Done."
+  else
+    if model_is_in_use "$cache_dir"; then
+      die "cannot remove '${model_name}': it is currently in use by llama-cli or llama-server."
+    fi
+
+    local all_quants quant_list=()
+    all_quants="$(_find_cached_gguf_files "$cache_dir")"
+    if [[ -n "$all_quants" ]]; then
+      while IFS= read -r fname; do
+        [[ -z "$fname" ]] && continue
+        local tag
+        tag="$(extract_quant_from_filename "$fname")"
+        quant_list+=("$tag")
+      done < <(printf '%s\n' "$all_quants" | sort -u)
+    fi
+
+    echo "The following quant variants will be removed:"
+    if [[ ${#quant_list[@]} -gt 0 ]]; then
+      local q
+      for q in "${quant_list[@]}"; do
+        printf '  %s:%s\n' "$model_name" "$q"
+      done
+    else
+      printf '  %s  (no GGUF variants found)\n' "$model_name"
+    fi
+    echo
+
+    confirm_destructive_action "removing cached model '${model_name}'" "$force" || return 1
+
+    echo "Removing model: $model_name"
+    rm -rf "$cache_dir"
+    echo "Done."
+  fi
+}
