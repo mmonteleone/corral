@@ -2,18 +2,18 @@
 
 Run local models with the ease of [Ollama](https://ollama.com) and the power of official [llama.cpp](https://github.com/ggml-org/llama.cpp) releases with full [Hugging Face GGUF](https://huggingface.co/models?library=gguf&sort=trending) model access.
 
-Tagged Yallama releases ship a single Bash script artifact that installs official llama.cpp releases, uses the standard Hugging Face cache, and wraps a thin CLI to simulate common Ollama-style flows for interacting with models: *pull*, *run*, *serve*, *list*, *remove*, *update*, etc. The repository itself keeps modular Bash sources.
+Yallama is a single Bash script. It installs official llama.cpp releases, uses the standard Hugging Face cache, and provides an Ollama-style CLI for running and managing local models: *search*, *pull*, *run*, *serve*, *list*, *remove*, *update*, etc. along with templated usage profiles.
 
 ## Why use it?
 
-- Upstream, official, llama.cpp with all its perf benefits and model support (*ahem*, [Gemma 4](https://deepmind.google/models/gemma/gemma-4/)) vs downstream integrations and forks
-- Same ergonomics as Ollama for lazy people like me, including ease of running *and* managing local models
-- Broad Hugging Face model registry, not easily reached through Ollama
-- Built-in chat UI and OpenAI API endpoint compatibility thanks to `llama-server`
+- Upstream, official llama.cpp — all its performance benefits and model support (*ahem*, [Gemma 4](https://deepmind.google/models/gemma/gemma-4/)) vs downstream integrations and forks
+- Ollama-style ergonomics for running *and* managing local models, without an always-on daemon
+- The full Hugging Face model registry, not just what Ollama ships
+- Built-in chat UI and OpenAI-compatible API endpoint via `llama-server`
+- Model search and discovery against Hugging Face from the command line
 - Command, model, and quant shell completions for fish, zsh, and bash
-- Templated profiles for common model usage
-- No always-on daemon
-- Standard HF cache, so downloaded models are visible to other tools
+- Saved profiles for pinning a model with a specific set of flags
+- Standard HF cache — downloaded models are visible to other tools
 
 ## Does the world really need this?
 
@@ -21,28 +21,35 @@ Not really.
 
 ## Install
 
-System-wide:
+Download the script system-wide:
 
 ```sh
 sudo curl -fsSL https://github.com/mmonteleone/yallama/releases/latest/download/yallama -o /usr/local/bin/yallama && sudo chmod +x /usr/local/bin/yallama
 ```
 
-User-local (no `sudo`):
+Or user-local (no `sudo`):
 
 ```sh
 curl -fsSL https://github.com/mmonteleone/yallama/releases/latest/download/yallama -o ~/.local/bin/yallama && chmod +x ~/.local/bin/yallama
 ```
 
-Then install llama.cpp:
+> **Note:** `~/.local/bin` may not be in your `$PATH` by default on macOS. If `yallama` isn't found after installing, add it: `export PATH="$HOME/.local/bin:$PATH"` in your shell profile.
+
+Then install llama.cpp and set up shell completions:
 
 ```sh
 yallama install
 ```
 
+`yallama install` downloads the latest llama.cpp release and — after prompting — adds it to your `$PATH` and installs shell completions for your current shell. Pass `--shell-profile` to skip the prompt and allow edits automatically, or `--no-shell-profile` to skip profile edits entirely.
+
 ## Quick start
 
 ```sh
-# Chat with a model
+# Find a model
+yallama search gemma --quants
+
+# Chat with a model (downloads on first use)
 yallama run unsloth/gemma-4-26B-A4B-it-GGUF
 
 # Serve the same model as an OpenAI-compatible API + web UI at http://localhost:8080
@@ -88,10 +95,12 @@ yallama run coder -- --temp 0.5   # extra flags appended, overriding profile
 
 | Command | What it does |
 |---|---|
-| `install` | Install llama.cpp |
+| `install` | Install llama.cpp, set up `$PATH` and shell completions |
 | `run <MODEL[:QUANT]\|PROFILE>` | Download model if needed, start chat via `llama-cli` |
 | `serve <MODEL[:QUANT]\|PROFILE>` | Download model if needed, start chat and API server via `llama-server` |
 | `pull <MODEL[:QUANT]>` | Download a model (or specific quant) without running it |
+| `search <QUERY>` | Search Hugging Face for llama.cpp-compatible GGUF models |
+| `browse <MODEL>` | Open a model's Hugging Face page in the browser |
 | `list` / `ls` | List downloaded models, including per-quant rows for GGUF variants |
 | `remove <MODEL[:QUANT]>` / `rm <MODEL[:QUANT]>` | Delete an entire model or just one quant variant |
 | `profile` | Manage named run/serve profiles |
@@ -109,6 +118,39 @@ For flags and per-command help:
 yallama help
 yallama install --help
 yallama run --help
+```
+
+## Shell completions
+
+Completions for commands, model names, quant variants, and profile names are available for fish, zsh, and bash. They are installed automatically when `yallama install` edits your shell profile. If you skipped shell profile edits during `yallama install`, re-run it with `--shell-profile` to enable them:
+
+```sh
+yallama install --shell-profile
+```
+
+## Model search
+
+Search Hugging Face for llama.cpp-compatible GGUF models directly from the terminal:
+
+```sh
+# Search by keyword, sorted by trending (default)
+yallama search gemma
+
+# Show available quant variants for each result
+yallama search qwen --quants
+
+# Sort by downloads, limit results
+yallama search llama --sort downloads --limit 10
+
+# Machine-readable output
+yallama search mistral --json
+yallama search mistral --quiet   # one model ID per line
+
+# Open a model's Hugging Face page in the browser
+yallama browse unsloth/gemma-4-26B-A4B-it-GGUF
+
+# Print the URL instead of opening a browser
+yallama browse unsloth/gemma-4-26B-A4B-it-GGUF --print
 ```
 
 ## Model names
@@ -253,10 +295,10 @@ Both steps prompt for confirmation. Add `--force` to skip prompts.
 ## Compatibility
 
 - macOS arm64 / x86_64 and Linux x86_64 / arm64
+- Tools: **curl**, **tar**, **jq**, and standard POSIX userland tools
 - fish, zsh, and bash for PATH/completion setup
-- `curl`, `tar`, `jq`, and standard POSIX userland tools for install/update
-
-`install` and `update` are atomic. `remove` refuses to delete models that are currently in use.
+- `install` and `update` are atomic
+- `remove` refuses to delete models that are currently in use
 
 ## Development
 
