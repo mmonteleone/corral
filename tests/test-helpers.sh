@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[1]}")/.." && pwd)"
-SCRIPT_PATH="${ROOT_DIR}/yallama"
+SCRIPT_PATH="${ROOT_DIR}/src/yallama.sh"
 TEST_ROOT="$(mktemp -d)"
 
 PASS_COUNT=0
@@ -81,14 +81,14 @@ source_yallama_libs() {
   DEFAULT_TEMPLATES_DIR="${HOME}/.config/yallama/templates"
   HF_HUB_DIR="${HOME}/.cache/huggingface/hub"
   SHELL_PROFILE_EDIT_DECISION=""
-  YALLAMA_VERSION="0.1.1"
+  YALLAMA_VERSION="dev"
 
-  source "${ROOT_DIR}/lib/yallama-helpers.sh"
-  source "${ROOT_DIR}/lib/yallama-cache.sh"
-  source "${ROOT_DIR}/lib/yallama-profiles.sh"
-  source "${ROOT_DIR}/lib/yallama-runtime.sh"
-  source "${ROOT_DIR}/lib/yallama-search.sh"
-  source "${ROOT_DIR}/lib/yallama-completions.sh"
+  source "${ROOT_DIR}/src/lib/yallama-helpers.sh"
+  source "${ROOT_DIR}/src/lib/yallama-cache.sh"
+  source "${ROOT_DIR}/src/lib/yallama-profiles.sh"
+  source "${ROOT_DIR}/src/lib/yallama-runtime.sh"
+  source "${ROOT_DIR}/src/lib/yallama-search.sh"
+  source "${ROOT_DIR}/src/lib/yallama-completions.sh"
 }
 
 report_results() {

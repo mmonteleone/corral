@@ -44,7 +44,9 @@ HF_HUB_DIR="${HOME}/.cache/huggingface/hub"
 # Set to "allow" or "deny" by shell_profile_edits_allowed() to avoid
 # prompting the user more than once within a single invocation.
 SHELL_PROFILE_EDIT_DECISION=""
-YALLAMA_VERSION="0.1.1"
+# @VERSION@ is replaced with the git tag by tools/build-standalone.sh at build time.
+# When running directly from source (dev mode), this placeholder is preserved.
+YALLAMA_VERSION="@VERSION@"
 
 # Source all library modules. When building a standalone script,
 # tools/build-standalone.sh replaces the region between the BEGIN/END markers

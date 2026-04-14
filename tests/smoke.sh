@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SCRIPT_PATH="${ROOT_DIR}/yallama"
+SCRIPT_PATH="${ROOT_DIR}/src/yallama.sh"
 TEST_ROOT="$(mktemp -d)"
 
 PASS_COUNT=0
@@ -200,7 +200,7 @@ test_generated_standalone_script() {
   fi
 
   if grep -q 'source "${SCRIPT_DIR}/lib/' "$generated_script"; then
-    fail 'generated standalone script is self-contained' 'expected generated script to inline module code instead of sourcing lib/*.sh'
+    fail 'generated standalone script is self-contained' 'expected generated script to inline module code instead of sourcing src/lib/*.sh'
     return
   fi
 

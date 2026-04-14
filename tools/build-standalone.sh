@@ -2,17 +2,20 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TEMPLATE_PATH="${ROOT_DIR}/yallama"
+TEMPLATE_PATH="${ROOT_DIR}/src/yallama.sh"
 DEFAULT_OUTPUT_PATH="${ROOT_DIR}/dist/yallama"
 
 MODULES=(
-  "lib/yallama-helpers.sh"
-  "lib/yallama-cache.sh"
-  "lib/yallama-profiles.sh"
-  "lib/yallama-runtime.sh"
-  "lib/yallama-search.sh"
-  "lib/yallama-completions.sh"
+  "src/lib/yallama-helpers.sh"
+  "src/lib/yallama-cache.sh"
+  "src/lib/yallama-profiles.sh"
+  "src/lib/yallama-runtime.sh"
+  "src/lib/yallama-search.sh"
+  "src/lib/yallama-completions.sh"
 )
+
+# Derive version from the nearest git tag; fall back to "dev" for untagged builds.
+GIT_VERSION="$(git -C "$ROOT_DIR" describe --tags 2>/dev/null || echo "dev")"
 
 usage() {
   cat <<EOF
@@ -80,6 +83,8 @@ while IFS= read -r line || [[ -n "$line" ]]; do
       ;;
     *)
       if [[ "$inside_generated_block" == "false" ]]; then
+        # Replace @VERSION@ placeholder with the current git tag.
+        line="${line//@VERSION@/$GIT_VERSION}"
         printf '%s\n' "$line" >> "$tmp_output"
       fi
       ;;
