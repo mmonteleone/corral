@@ -3,6 +3,7 @@ name: Validate
 on:
   push:
   pull_request:
+  workflow_call:
 
 jobs:
   shellcheck:
@@ -17,7 +18,7 @@ jobs:
             sudo apt-get install -y shellcheck
           fi
       - name: Lint script
-        run: shellcheck yallama
+        run: shellcheck src/yallama.sh tools/build-standalone.sh src/lib/*.sh tests/smoke.sh tests/unit.sh tests/test-helpers.sh
 
   smoke:
     name: Smoke (${{ matrix.os }})
@@ -44,3 +45,16 @@ jobs:
       - name: Run smoke tests
         shell: bash
         run: bash tests/smoke.sh
+
+  unit:
+    name: Unit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run unit tests
+        shell: bash
+        run: bash tests/unit.sh
