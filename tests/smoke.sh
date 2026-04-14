@@ -188,6 +188,18 @@ EOF
   chmod +x "$path"
 }
 
+test_standalone_script_is_current() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "${ROOT_DIR}/tools/build-standalone.sh" --check
+  if [[ $RUN_STATUS -eq 0 ]]; then
+    pass 'standalone script is current'
+  else
+    fail 'standalone script is current' "expected generated root script to match src+yallama modules: $(cat "$stderr_file")"
+  fi
+}
+
 setup_test_env() {
   TEST_DIR="$(mktemp -d "${TEST_ROOT}/case.XXXXXX")"
   export HOME="${TEST_DIR}/home"
@@ -2180,6 +2192,8 @@ main() {
     exit 1
   }
 
+  setup_test_env
+  test_standalone_script_is_current
   setup_test_env
   test_top_level_help
   test_argument_parsing_errors

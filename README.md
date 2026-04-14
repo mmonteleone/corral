@@ -2,7 +2,7 @@
 
 Run local models with the ease of [Ollama](https://ollama.com) and the power of official [llama.cpp](https://github.com/ggml-org/llama.cpp) releases with full [Hugging Face GGUF](https://huggingface.co/models?library=gguf&sort=trending) model access.
 
-Yallama is a single Bash script that installs official llama.cpp releases, uses the standard Hugging Face cache, and wraps a thin CLI to simulate common Ollama-style flows for interacting with models: *pull*, *run*, *serve*, *list*, *remove*, *update*, etc.
+Yallama is distributed as a single Bash script that installs official llama.cpp releases, uses the standard Hugging Face cache, and wraps a thin CLI to simulate common Ollama-style flows for interacting with models: *pull*, *run*, *serve*, *list*, *remove*, *update*, etc.
 
 ## Why use it?
 
@@ -258,9 +258,20 @@ Both steps prompt for confirmation. Add `--force` to skip prompts.
 
 `install` and `update` are atomic. `remove` refuses to delete models that are currently in use.
 
+## Development
+
+The tracked root [yallama](/Users/mmonteleone/source/repos/yallama/yallama) is the standalone distributable script. Its maintainable source lives in [src/yallama.sh](/Users/mmonteleone/source/repos/yallama/src/yallama.sh) plus the domain modules under [lib](/Users/mmonteleone/source/repos/yallama/lib).
+
+Regenerate the standalone script after source changes with:
+
+```sh
+bash tools/build-standalone.sh
+```
+
 ## Validation
 
 ```sh
+bash tools/build-standalone.sh --check
 shellcheck yallama
 bash tests/smoke.sh
 ```
