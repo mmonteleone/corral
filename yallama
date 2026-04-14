@@ -27,6 +27,7 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_NAME="$(basename "$0")"
 DEFAULT_INSTALL_ROOT="${HOME}/.llama.cpp"
 DEFAULT_PROFILES_DIR="${HOME}/.config/yallama/profiles"
@@ -160,130 +161,7 @@ ensure_llama_in_path() {
   fi
 }
 
-# ── quant helpers ─────────────────────────────────────────────────────────────
-
-# Parse "user/model[:quant]" into REPLY_MODEL and REPLY_QUANT globals.
-_parse_model_spec() {
-  local spec="$1"
-  REPLY_MODEL="${spec%%:*}"
-  if [[ "$spec" == *:* ]]; then
-    REPLY_QUANT="${spec#*:}"
-  else
-    REPLY_QUANT=""
-  fi
-}
-
-# Extract a quant tag from a GGUF filename for display and matching.
-# e.g., "gemma-4-26B-A4B-it-UD-Q6_K.gguf" -> "UD-Q6_K"
-# Falls back to the full basename (minus .gguf) if no known pattern matches.
-extract_quant_from_filename() {
-  local filename="$1"
-  local base="${filename%.gguf}"
-  # Strip split-file suffix (e.g., -00001-of-00003)
-  base="${base%-[0-9][0-9][0-9][0-9][0-9]-of-[0-9][0-9][0-9][0-9][0-9]}"
-  # Match common GGUF quant patterns at the end of the basename.
-  # Handles: Q4_K_M, UD-Q6_K, IQ4_XS, F16, BF16, F32, etc.
-  # Optional 2-letter prefix group (e.g. UD-, SD-) before the main quant type.
-  if [[ "$base" =~ [-._](([A-Z][A-Z][-_])?(I?Q[0-9]+(_[A-Z0-9]+)*|F16|BF16|F32))$ ]]; then
-    printf '%s\n' "${BASH_REMATCH[1]}"
-  else
-    printf '%s\n' "$base"
-  fi
-}
-
-# Normalize quant tags for robust matching.
-# - Case-insensitive by uppercasing.
-# - Treat '-' and '_' as equivalent by converting '-' to '_'.
-normalize_quant_tag() {
-  local quant="$1"
-  quant="$(printf '%s' "$quant" | tr '[:lower:]' '[:upper:]')"
-  quant="${quant//-/_}"
-  printf '%s\n' "$quant"
-}
-
-# Find cached GGUF file paths in a model's HF cache snapshots directory.
-# Prints one full path per line, deduplicated and sorted.
-_find_cached_gguf_paths() {
-  local cache_dir="$1"
-  local snapshot_dir
-  for snapshot_dir in "$cache_dir"/snapshots/*/; do
-    [[ -d "$snapshot_dir" ]] || continue
-    find "$snapshot_dir" \( -type f -o -type l \) -name '*.gguf' -print
-  done | sort -u
-}
-
-# Find cached GGUF files in a model's HF cache snapshots directory.
-# Prints one basename per line, deduplicated and sorted.
-_find_cached_gguf_files() {
-  local cache_dir="$1"
-  _find_cached_gguf_paths "$cache_dir" | while IFS= read -r f; do
-    [[ -z "$f" ]] && continue
-    basename "$f"
-  done | sort -u
-}
-
-# Find cached GGUF filenames whose extracted quant tag matches the given tag.
-# Prints matching basenames, one per line.
-_find_gguf_by_quant() {
-  local cache_dir="$1"
-  local quant="$2"
-  local normalized_quant
-  normalized_quant="$(normalize_quant_tag "$quant")"
-  _find_cached_gguf_files "$cache_dir" | while IFS= read -r fname; do
-    [[ -z "$fname" ]] && continue
-    local tag
-    tag="$(extract_quant_from_filename "$fname")"
-    if [[ "$(normalize_quant_tag "$tag")" == "$normalized_quant" ]]; then
-      printf '%s\n' "$fname"
-    fi
-  done
-}
-
-# Resolve a symlink to its absolute target path (follows one level).
-_resolve_link() {
-  local path="$1"
-  if [[ -L "$path" ]]; then
-    local dir target
-    dir="$(dirname "$path")"
-    target="$(readlink "$path")"
-    if [[ "$target" != /* ]]; then
-      target="${dir}/${target}"
-    fi
-    (cd "$(dirname "$target")" 2>/dev/null && printf '%s/%s' "$PWD" "$(basename "$target")")
-  else
-    printf '%s' "$path"
-  fi
-}
-
-# Remove GGUF files (symlinks + backing blobs) matching a quant tag from the cache.
-# Returns 0 if at least one file was removed, 1 otherwise.
-_remove_quant_files() {
-  local cache_dir="$1"
-  local quant="$2"
-  local normalized_quant
-  normalized_quant="$(normalize_quant_tag "$quant")"
-  local removed=0
-  local f
-  while IFS= read -r f; do
-    [[ -z "$f" ]] && continue
-    local fname tag
-    fname="$(basename "$f")"
-    tag="$(extract_quant_from_filename "$fname")"
-    if [[ "$(normalize_quant_tag "$tag")" == "$normalized_quant" ]]; then
-      # Delete the backing blob if this is a symlink
-      if [[ -L "$f" ]]; then
-        local blob_path
-        blob_path="$(_resolve_link "$f")"
-        if [[ -f "$blob_path" ]]; then
-          rm -f "$blob_path"
-        fi
-      fi
-      rm -f "$f"
-      removed=$((removed + 1))
-    fi
-  done < <(_find_cached_gguf_paths "$cache_dir")
-  [[ $removed -gt 0 ]]
-}
+source "${SCRIPT_DIR}/lib/yallama-cache.sh"
 
 # ── profiles ──────────────────────────────────────────────────────────────────
 
@@ -1439,65 +1317,12 @@ cmd_list() {
 
   local found=0
   local entries=()
-  local dir
-  for dir in "$HF_HUB_DIR"/models--*/; do
-    [[ -d "$dir" ]] || continue
-    local entry
-    entry="$(basename "$dir")"
-    # models--USER--MODEL-NAME maps to USER/MODEL-NAME.
-    # Only the first '--' separator (between user and model) becomes '/'; hyphens
-    # within the user or model name remain as-is because they are stored as hyphens.
-    local model_name="${entry#models--}"
-    model_name="${model_name/--//}"
-
-    # Discover cached GGUF files and list per-quant rows.
-    local gguf_files
-    gguf_files="$(_find_cached_gguf_files "$dir")"
-
-    if [[ -z "$gguf_files" ]]; then
-      # No GGUF files: fall back to model-level row with total directory size.
-      local size
-      size="$(du -sh "$dir" 2>/dev/null | cut -f1)"
-      entries+=("${model_name}||${size}")
-      found=1
-      continue
-    fi
-
-    # Get unique quant tags from the GGUF filenames.
-    local quant_tags
-    quant_tags="$(while IFS= read -r fname; do
-      extract_quant_from_filename "$fname"
-    done <<< "$gguf_files" | sort -u)"
-
-    while IFS= read -r tag; do
-      [[ -z "$tag" ]] && continue
-      # Find all snapshot files matching this quant tag and compute total size.
-      local normalized_tag
-      normalized_tag="$(normalize_quant_tag "$tag")"
-      local matching_files=()
-      local f
-      while IFS= read -r f; do
-        [[ -z "$f" ]] && continue
-        local ftag
-        ftag="$(extract_quant_from_filename "$(basename "$f")")"
-        if [[ "$(normalize_quant_tag "$ftag")" == "$normalized_tag" ]]; then
-          matching_files+=("$f")
-        fi
-      done < <(_find_cached_gguf_paths "$dir")
-
-      local size
-      if [[ ${#matching_files[@]} -eq 1 ]]; then
-        size="$(du -shL "${matching_files[0]}" 2>/dev/null | cut -f1)"
-      elif [[ ${#matching_files[@]} -gt 1 ]]; then
-        size="$(du -chL "${matching_files[@]}" 2>/dev/null | tail -1 | cut -f1)"
-      else
-        size="?"
-      fi
-
-      entries+=("${model_name}|${tag}|${size}")
-      found=1
-    done <<< "$quant_tags"
-  done
+  local entry
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    entries+=("$entry")
+    found=1
+  done < <(collect_cached_model_entries)
 
   if [[ "$found" -eq 0 ]]; then
     if [[ "$JSON" == "true" ]]; then
@@ -1567,49 +1392,6 @@ Options:
 EOF
 }
 
-# Convert "USER/MODEL" -> "${HF_HUB_DIR}/models--USER--MODEL"
-#
-# HuggingFace uses exactly one '--' as the separator between the org/user and the
-# model name in the cache directory. Hyphens *within* the user or model name are
-# kept as single hyphens. For example:
-#   "unsloth/gemma-4-26B-A4B-it-GGUF"  ->  "models--unsloth--gemma-4-26B-A4B-it-GGUF"
-# MODEL_NAME must be exactly "USER/MODEL" with one slash and no leading/trailing slashes.
-model_name_to_cache_dir() {
-  local model_name="$1"
-  local user="${model_name%%/*}"
-  local model="${model_name#*/}"
-  if [[ -z "$user" || -z "$model" || "$model" == */* ]]; then
-    die "invalid model name '${model_name}': expected format USER/MODEL"
-  fi
-  printf '%s/models--%s--%s' "$HF_HUB_DIR" "$user" "$model"
-}
-
-model_is_in_use() {
-  local cache_dir="$1"
-
-  # Find PIDs of any running llama-cli or llama-server process.
-  local pids
-  pids="$(ps -eo pid=,comm= 2>/dev/null | awk '$2 ~ /llama-(cli|server)$/ {print $1}')"
-  [[ -z "$pids" ]] && return 1
-
-  if command -v lsof >/dev/null 2>&1; then
-    # lsof -p checks open fds AND memory-mapped files for the given PIDs.
-    # Faster and more reliable than lsof +D (which truncates COMMAND to 9 chars
-    # and can miss mmap'd files that have had their fd closed after mapping).
-    local pid_list
-    pid_list="$(printf '%s' "$pids" | tr '\n' ',' | sed 's/,$//')"
-    lsof -p "$pid_list" 2>/dev/null | grep -qF "$cache_dir"
-  else
-    # Linux fallback: /proc/PID/maps includes memory-mapped files.
-    local pid
-    while IFS= read -r pid; do
-      [[ -z "$pid" ]] && continue
-      grep -qF "$cache_dir" "/proc/${pid}/maps" 2>/dev/null && return 0
-    done <<< "$pids"
-    return 1
-  fi
-}
-
 cmd_remove() {
   if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
     cmd_remove_usage
@@ -1642,8 +1424,6 @@ cmd_remove() {
 
   if [[ -n "$quant" ]]; then
     # Remove a specific quant variant.
-    local normalized_quant
-    normalized_quant="$(normalize_quant_tag "$quant")"
     local matching_files
     matching_files="$(_find_gguf_by_quant "$cache_dir" "$quant")"
     if [[ -z "$matching_files" ]]; then
@@ -1652,21 +1432,7 @@ cmd_remove() {
 
     # Check only the files belonging to this quant — not the whole model dir,
     # so that a different running quant doesn't block removal of an idle one.
-    local _qf _qtag _qblob
-    while IFS= read -r _qf; do
-      [[ -z "$_qf" ]] && continue
-      _qtag="$(extract_quant_from_filename "$(basename "$_qf")")"
-      [[ "$(normalize_quant_tag "$_qtag")" == "$normalized_quant" ]] || continue
-      if model_is_in_use "$_qf"; then
-        die "cannot remove '${model_name}:${quant}': it is currently in use by llama-cli or llama-server."
-      fi
-      if [[ -L "$_qf" ]]; then
-        _qblob="$(_resolve_link "$_qf")"
-        if [[ -n "$_qblob" ]] && model_is_in_use "$_qblob"; then
-          die "cannot remove '${model_name}:${quant}': it is currently in use by llama-cli or llama-server."
-        fi
-      fi
-    done < <(_find_cached_gguf_paths "$cache_dir")
+    quant_is_in_use "$cache_dir" "$model_name" "$quant"
 
     confirm_destructive_action "removing quant '${quant}' from '${model_name}'" "$force" || return 1
 
@@ -1935,20 +1701,10 @@ cmd_pull() {
   ensure_llama_in_path
   require_cmds llama-cli
 
-  if [[ -d "$cache_dir" ]]; then
-    if [[ -z "$quant" ]]; then
-      echo "Model already cached: $model_spec"
-      echo "  $cache_dir"
-      return 0
-    fi
-
-    local existing_quant_files
-    existing_quant_files="$(_find_gguf_by_quant "$cache_dir" "$quant")"
-    if [[ -n "$existing_quant_files" ]]; then
-      echo "Model already cached: $model_spec"
-      echo "  $cache_dir"
-      return 0
-    fi
+  if cache_has_model_or_quant "$cache_dir" "$quant"; then
+    echo "Model already cached: $model_spec"
+    echo "  $cache_dir"
+    return 0
   fi
 
   echo "Pulling model: $model_spec"
@@ -1961,18 +1717,9 @@ cmd_pull() {
   local pull_status=0
   llama-cli -hf "$model_spec" "${hf_args[@]+"${hf_args[@]}"}" --no-conversation --single-turn --prompt ' ' --no-display-prompt -n 0 </dev/null || pull_status=$?
 
-  if [[ -z "$quant" ]]; then
-    if [[ -d "$cache_dir" ]]; then
-      echo "Done: $model_spec"
-      return 0
-    fi
-  else
-    local pulled_quant_files
-    pulled_quant_files="$(_find_gguf_by_quant "$cache_dir" "$quant")"
-    if [[ -n "$pulled_quant_files" ]]; then
-      echo "Done: $model_spec"
-      return 0
-    fi
+  if cache_has_model_or_quant "$cache_dir" "$quant"; then
+    echo "Done: $model_spec"
+    return 0
   fi
 
   if [[ $pull_status -ne 0 ]]; then
