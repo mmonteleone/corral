@@ -188,6 +188,27 @@ EOF
   chmod +x "$path"
 }
 
+write_mock_ps() {
+  local path="$1"
+  cat >"$path" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$*" == *"pid=,comm=,args="* ]]; then
+  cat <<'OUT'
+26366 awk awk { if (proc !~ /llama-(cli|server)/) next }
+31111 llama-server /tmp/install/current/llama-server -hf demo/server-model --port 9000
+32222 llama-cli /tmp/install/current/llama-cli -hf demo/cli-model
+OUT
+  exit 0
+fi
+
+echo "mock ps: unsupported args: $*" >&2
+exit 1
+EOF
+  chmod +x "$path"
+}
+
 test_generated_standalone_script() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
@@ -1401,6 +1422,39 @@ test_browse_no_model_errors() {
   fi
 }
 
+test_ps_ignores_awk_false_positive() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  write_mock_ps "${TEST_DIR}/bin/ps"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" ps
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'ps excludes awk false positive' "ps failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+
+  if ! assert_contains "$out" 'llama-server'; then
+    fail 'ps excludes awk false positive' "expected llama-server row, got: $out"
+    return
+  fi
+
+  if ! assert_contains "$out" 'llama-cli'; then
+    fail 'ps excludes awk false positive' "expected llama-cli row, got: $out"
+    return
+  fi
+
+  if assert_contains "$out" 'awk'; then
+    fail 'ps excludes awk false positive' "did not expect awk row, got: $out"
+    return
+  fi
+
+  pass 'ps excludes awk false positive'
+}
+
 test_search_bad_argument_errors() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
@@ -2359,6 +2413,9 @@ main() {
 
   setup_test_env
   test_browse_no_model_errors
+
+  setup_test_env
+  test_ps_ignores_awk_false_positive
 
   setup_test_env
   test_search_bad_argument_errors
