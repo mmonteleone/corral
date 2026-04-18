@@ -321,6 +321,7 @@ setup_test_env() {
   export SHELL="/bin/bash"
   unset CORRAL_PROFILES_DIR
   unset CORRAL_TEMPLATES_DIR
+  unset XDG_CONFIG_HOME
   unset ZDOTDIR
 
   mkdir -p "$HOME" "$CORRAL_TEST_FIXTURES_DIR" "$CORRAL_TEST_STATE_DIR" "$CORRAL_TEST_LOG_DIR" "${TEST_DIR}/bin"
@@ -1244,7 +1245,7 @@ EOF
      assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" 'opencode|.'; then
     pass 'launch opencode updates jsonc and launches tool'
   else
-    fail 'launch opencode updates jsonc and launches tool' 'expected opencode launch to merge JSONC config and exec opencode'
+    fail 'launch opencode updates jsonc and launches tool' "expected opencode launch to merge JSONC config and exec opencode; config=$(cat "$config_path" 2>/dev/null || echo missing), stdout=$(cat "$stdout_file" 2>/dev/null || echo empty), stderr=$(cat "$stderr_file" 2>/dev/null || echo empty), launch_log=$(cat "${CORRAL_TEST_LOG_DIR}/launch.log" 2>/dev/null || echo missing), XDG_CONFIG_HOME=${XDG_CONFIG_HOME-unset}"
   fi
 }
 
