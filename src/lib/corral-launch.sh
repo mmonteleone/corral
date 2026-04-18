@@ -1,4 +1,5 @@
 # Launch supported third-party coding harnesses against a running corral server.
+# shellcheck shell=bash
 
 CORRAL_LAUNCH_PROVIDER_ID="corral-launch"
 
@@ -113,7 +114,11 @@ _strip_jsonc() {
           nxt = substr(text, i + 1, 1)
           if (nxt == "/") {
             i += 2
-            while (i <= length(text) && substr(text, i, 1) !~ /[\r\n]/) {
+            while (i <= length(text)) {
+              line_ch = substr(text, i, 1)
+              if (line_ch == "\r" || line_ch == "\n") {
+                break
+              }
               i += 1
             }
             continue
@@ -204,6 +209,7 @@ _normalize_json_for_merge() {
 
   case "$merge_mode" in
     pi-models)
+      # shellcheck disable=SC2016  # jq program is intentionally single-quoted.
       jq_filter='def is_provider_entry: type == "object" and (has("api") or has("baseUrl") or has("models"));
         if type != "object" then
           {}
@@ -334,7 +340,7 @@ _launch_resolve_target() {
     return 1
   fi
 
-  IFS=$'\t' read -r REPLY_LAUNCH_PID REPLY_LAUNCH_PROCESS REPLY_LAUNCH_PORT REPLY_LAUNCH_MODEL <<< "$eligible_rows"
+  IFS=$'\t' read -r _ REPLY_LAUNCH_PROCESS REPLY_LAUNCH_PORT REPLY_LAUNCH_MODEL <<< "$eligible_rows"
   REPLY_LAUNCH_ENDPOINT="http://127.0.0.1:${REPLY_LAUNCH_PORT}/v1"
 }
 
