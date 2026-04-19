@@ -527,7 +527,6 @@ EOF
   local expected
   expected="$(cat <<'EOF'
 MODEL              DOWNLOADS  LIKES
------------------  ---------  -----
 short                     12      3
 much-longer-model          4     55
 EOF
@@ -537,6 +536,83 @@ EOF
     pass 'print_tsv_table sizes columns dynamically'
   else
     fail 'print_tsv_table sizes columns dynamically' "unexpected table output: $result"
+  fi
+}
+
+test_print_tsv_table_ignores_ansi_width() {
+  local result
+  result="$(_print_tsv_table 'lll' $'MODEL\tBACKEND\tSIZE' <<EOF
+demo/test-GGUF	llama.cpp	${ANSI_COLOR_GREEN}2.0K${ANSI_COLOR_RESET}
+demo/test-GGUF:Q8_0	llama.cpp	${ANSI_COLOR_GREEN}4.0K${ANSI_COLOR_RESET}
+EOF
+)"
+
+  if assert_contains "$result" "demo/test-GGUF       llama.cpp  ${ANSI_COLOR_GREEN}2.0K${ANSI_COLOR_RESET}" && \
+     assert_contains "$result" "demo/test-GGUF:Q8_0  llama.cpp  ${ANSI_COLOR_GREEN}4.0K${ANSI_COLOR_RESET}"; then
+    pass 'print_tsv_table ignores ansi for width'
+  else
+    fail 'print_tsv_table ignores ansi for width' "unexpected ANSI-aware table output: $result"
+  fi
+}
+
+test_ansi_color_returns_named_escape_sequence() {
+  local result
+  result="$(_ansi_color cyan)"
+
+  if assert_eq "$result" "$ANSI_COLOR_CYAN"; then
+    pass 'ansi_color returns named escape sequence'
+  else
+    fail 'ansi_color returns named escape sequence' 'expected cyan ANSI escape sequence'
+  fi
+}
+
+test_wrap_color_applies_named_escape_sequence() {
+  local result
+  result="$(_wrap_color green '2.0K')"
+
+  if assert_eq "$result" "${ANSI_COLOR_GREEN}2.0K${ANSI_COLOR_RESET}"; then
+    pass 'wrap_color applies named escape sequence'
+  else
+    fail 'wrap_color applies named escape sequence' 'expected wrapped green text'
+  fi
+}
+
+test_wrap_stdout_color_is_plain_without_tty() {
+  local stdout_file="${TEST_ROOT}/stdout.color-plain"
+  local result
+  result="$(_wrap_stdout_color cyan 'MODEL' >"$stdout_file"; cat "$stdout_file")"
+
+  if assert_eq "$result" 'MODEL'; then
+    pass 'wrap_stdout_color leaves text plain without tty'
+  else
+    fail 'wrap_stdout_color leaves text plain without tty' "expected plain text, got '$result'"
+  fi
+}
+
+test_stdout_supports_color_disabled_without_tty() {
+  local stdout_file="${TEST_ROOT}/stdout.no-tty"
+  if ! (_stdout_supports_color >"$stdout_file"); then
+    pass 'stdout_supports_color disables color without tty'
+  else
+    fail 'stdout_supports_color disables color without tty' 'expected non-tty stdout to disable color'
+  fi
+}
+
+test_stdout_supports_color_disabled_by_no_color() {
+  local tty_probe="[[ -t 1 ]]"
+  if script -q /dev/null bash -lc "source '${ROOT_DIR}/src/lib/corral-helpers.sh'; NO_COLOR=1; ${tty_probe}; _stdout_supports_color" >/dev/null 2>&1; then
+    fail 'stdout_supports_color honors NO_COLOR' 'expected NO_COLOR to disable color output'
+  else
+    pass 'stdout_supports_color honors NO_COLOR'
+  fi
+}
+
+test_stdout_supports_color_disabled_for_dumb_term() {
+  local tty_probe="[[ -t 1 ]]"
+  if script -q /dev/null env TERM=dumb bash -lc "source '${ROOT_DIR}/src/lib/corral-helpers.sh'; ${tty_probe}; _stdout_supports_color" >/dev/null 2>&1; then
+    fail 'stdout_supports_color disables color for dumb term' 'expected TERM=dumb to disable color output'
+  else
+    pass 'stdout_supports_color disables color for dumb term'
   fi
 }
 
@@ -1053,6 +1129,13 @@ test_resolve_backend_prefers_flag
 test_resolve_backend_falls_back_to_platform_default
 test_resolve_backend_rejects_invalid_value
 test_print_tsv_table_dynamic_widths
+test_print_tsv_table_ignores_ansi_width
+test_ansi_color_returns_named_escape_sequence
+test_wrap_color_applies_named_escape_sequence
+test_wrap_stdout_color_is_plain_without_tty
+test_stdout_supports_color_disabled_without_tty
+test_stdout_supports_color_disabled_by_no_color
+test_stdout_supports_color_disabled_for_dumb_term
 test_is_mlx_platform_arm64
 test_is_mlx_platform_non_arm64
 test_infer_model_backend_cached_gguf

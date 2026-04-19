@@ -54,7 +54,6 @@ complete -c $sn -n "__fish_seen_subcommand_from uninstall"   -l delete-hf-cache 
 complete -c $sn -n "__fish_seen_subcommand_from uninstall"   -l self             -d 'Also delete the corral script itself'
 complete -c $sn -n "__fish_seen_subcommand_from uninstall remove rm prune" -l force    -d 'Skip confirmation prompt'
 complete -c $sn -n "__fish_seen_subcommand_from list ls"     -l quiet            -d 'Only print names'
-complete -c $sn -n "__fish_seen_subcommand_from list ls"     -l json             -d 'JSON output'
 complete -c $sn -n "__fish_seen_subcommand_from list ls"     -l models           -d 'Show models only'
 complete -c $sn -n "__fish_seen_subcommand_from list ls"     -l profiles         -d 'Show profiles only'
 complete -c $sn -n "__fish_seen_subcommand_from list ls"     -l templates        -d 'Show templates only'
@@ -62,7 +61,6 @@ complete -c $sn -n "__fish_seen_subcommand_from search"      -l sort            
 complete -c $sn -n "__fish_seen_subcommand_from search"      -l limit            -d 'Maximum number of results'
 complete -c $sn -n "__fish_seen_subcommand_from search"      -l quants           -d 'Show available quant variants'
 complete -c $sn -n "__fish_seen_subcommand_from search"      -l quiet            -d 'Only print model identifiers'
-complete -c $sn -n "__fish_seen_subcommand_from search"      -l json             -d 'JSON output'
 complete -c $sn -n "__fish_seen_subcommand_from browse"      -l print            -d 'Print URL instead of opening browser'
 complete -c $sn -n "__fish_seen_subcommand_from launch"      -l port             -d 'Use server on a specific port'
 complete -c $sn -n "__fish_seen_subcommand_from browse pull" -a "(__corral_cached_models)"
@@ -272,12 +270,11 @@ _corral() {
             '--sort[Sort order]:by:(trending downloads likes newest)' \
             '--limit[Maximum number of results]:n' \
             '--quants[Show available quant variants]' \
-            '--quiet[Only print model identifiers]' \
-            '--json[JSON output]' ;;
+            '--quiet[Only print model identifiers]' ;;
         browse)
           _arguments '--print[Print URL instead of opening browser]' && _corral_cached_models ;;
         list|ls)
-          _arguments '--backend[Backend]:backend:(mlx llama.cpp)' '--quiet[Only print names]' '--json[JSON output]' '--models[Show models only]' '--profiles[Show profiles only]' '--templates[Show templates only]' ;;
+          _arguments '--backend[Backend]:backend:(mlx llama.cpp)' '--quiet[Only print names]' '--models[Show models only]' '--profiles[Show profiles only]' '--templates[Show templates only]' ;;
         remove|rm)
           _arguments '--backend[Backend]:backend:(mlx llama.cpp)' '--force[Skip confirmation prompt]' && _corral_removal_targets ;;
         pull)
@@ -407,14 +404,14 @@ _${sn//-/_}_completions() {
     update)   COMPREPLY=(\$(compgen -W "--backend --path --arch --shell-profile --no-shell-profile" -- "\$cur")) ;;
     uninstall) COMPREPLY=(\$(compgen -W "--backend --path --delete-hf-cache --self --force" -- "\$cur")) ;;
     status)   COMPREPLY=(\$(compgen -W "--backend --path --check-update" -- "\$cur")) ;;
-    search)   COMPREPLY=(\$(compgen -W "--backend --sort --limit --quants --quiet --json" -- "\$cur")) ;;
+    search)   COMPREPLY=(\$(compgen -W "--backend --sort --limit --quants --quiet" -- "\$cur")) ;;
     browse)
       if [[ "\$cur" == --* ]]; then
         COMPREPLY=(\$(compgen -W "--print" -- "\$cur"))
       else
         COMPREPLY=(\$(compgen -W "\$models_words" -- "\$cur"))
       fi ;;
-    list|ls)  COMPREPLY=(\$(compgen -W "--backend --quiet --json --models --profiles --templates" -- "\$cur")) ;;
+    list|ls)  COMPREPLY=(\$(compgen -W "--backend --quiet --models --profiles --templates" -- "\$cur")) ;;
     pull)
       if [[ "\$cur" == --* ]]; then
         COMPREPLY=(\$(compgen -W "--backend" -- "\$cur"))

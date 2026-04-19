@@ -122,7 +122,6 @@ All models are stored in the standard Hugging Face cache (`~/.cache/huggingface/
 corral search gemma                                    # trending (default)
 corral search qwen --quants                            # show quant variants
 corral search llama --sort downloads --limit 10
-corral search mistral --json                           # machine-readable
 corral search mistral --quiet                          # one ID per line
 corral search --backend mlx qwen                       # MLX-only models
 ```
@@ -133,7 +132,6 @@ corral search --backend mlx qwen                       # MLX-only models
 corral list                     # all models, profiles, templates
 corral ls --models              # only models
 corral ls --backend mlx         # only MLX models
-corral ls --json                # JSON output
 corral remove USER/MODEL:QUANT  # remove one quant (llama.cpp)
 corral remove USER/MODEL        # remove entire model
 corral remove PROFILE_NAME      # remove a profile

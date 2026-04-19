@@ -3,7 +3,7 @@
 
 cmd_search_usage() {
   cat <<EOF
-Usage: $SCRIPT_NAME search [--backend <mlx|llama.cpp>] <QUERY> [--sort <by>] [--limit <n>] [--quants] [--quiet] [--json]
+Usage: $SCRIPT_NAME search [--backend <mlx|llama.cpp>] <QUERY> [--sort <by>] [--limit <n>] [--quants] [--quiet]
 
 Arguments:
   QUERY         Search term (e.g. "gemma", "qwen", "llama")
@@ -19,12 +19,10 @@ Options:
                 If omitted on macOS Apple Silicon, searches both types.
   --sort <by>   Sort order: trending (default), downloads, likes, newest.
   --limit <n>   Maximum number of results. Defaults to 20.
-  --quants      llama.cpp only. Also show available quant variants per model.
+  --quants      llama.cpp only. Also show available quant variants per model
                 With --quiet: prints one MODEL:QUANT per line when quants exist,
                 otherwise prints MODEL.
-                With --json: adds a quants array field per model.
   --quiet       Print only model identifiers, one per line.
-  --json        Output as a JSON array with name, type, downloads, and likes fields.
 EOF
 }
 
@@ -56,7 +54,6 @@ cmd_search() {
   local limit=20
   local quants="false"
   local quiet="false"
-  local json="false"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -65,7 +62,6 @@ cmd_search() {
       --limit)   limit="${2:-}"; shift 2 ;;
       --quants)  quants="true"; shift ;;
       --quiet)   quiet="true"; shift ;;
-      --json)    json="true"; shift ;;
       -h|--help) cmd_search_usage; return 0 ;;
       *)
         if [[ -z "$query" ]]; then
@@ -161,34 +157,27 @@ cmd_search() {
   fi
 
   if [[ "$count" -eq 0 ]]; then
-    if [[ "$json" == "true" ]]; then
-      echo "[]"
-    else
-      echo "No models found for: $query"
-    fi
+    echo "No models found for: $query"
     return 0
   fi
 
   # ── Combined search output ────────────────────────────────────────────────
   if [[ "$COMBINED_SEARCH" == "true" ]]; then
-    if [[ "$json" == "true" ]]; then
-      if [[ "$quants" == "true" ]]; then
-        printf '%s' "$results" | jq "${_jq_combined_def}"'
-          [.[] | select(has_gguf or has_mlx) | {name: .modelId, type: model_type, downloads: .downloads, likes: .likes, quants: (if has_gguf then quants else [] end), default_quant: (if has_gguf then default_quant else null end)}][0:'"${limit}"']'
-      else
-        printf '%s' "$results" | jq "${_jq_combined_def}"'
-          [.[] | select(has_gguf or has_mlx) | {name: .modelId, type: model_type, downloads: .downloads, likes: .likes}][0:'"${limit}"']'
-      fi
-    elif [[ "$quiet" == "true" ]]; then
+    if [[ "$quiet" == "true" ]]; then
       printf '%s' "$results" | jq -r "${_jq_combined_def}"'
         [.[] | select(has_gguf or has_mlx)][0:'"${limit}"'][] | .modelId'
     elif [[ "$quants" == "true" ]]; then
       printf '%s' "$results" \
         | jq -r "${_jq_combined_def}"'
             [.[] | select(has_gguf or has_mlx)][0:'"${limit}"'][] |
-            [.modelId, model_type, (.downloads // 0 | tostring), (.likes // 0 | tostring),
-             (if has_gguf then (default_quant as $dq | quants | map(if . == $dq then "*" + . else . end) | join(" ")) else "-" end)] | @tsv' \
-        | _print_tsv_table 'llrrl' $'MODEL\tTYPE\tDOWNLOADS\tLIKES\tQUANTS'
+            .modelId as $model |
+            [
+              [$model, model_type, (.downloads // 0 | tostring), (.likes // 0 | tostring)],
+              (if has_gguf then (quants[]? | ["  " + $model + ":" + ., "", "", ""]) else empty end)
+            ]
+            | .[]
+            | @tsv' \
+        | _print_tsv_table 'llrr' $'MODEL\tTYPE\tDOWNLOADS\tLIKES'
     else
       printf '%s' "$results" \
         | jq -r "${_jq_combined_def}"'
@@ -200,10 +189,7 @@ cmd_search() {
   fi
 
   if [[ "$BACKEND" == "mlx" ]]; then
-    if [[ "$json" == "true" ]]; then
-      printf '%s' "$results" | jq "${_jq_mlx_def}"'
-        [.[] | select(has_mlx) | {name: .modelId, downloads: .downloads, likes: .likes}][0:'"${limit}"']'
-    elif [[ "$quiet" == "true" ]]; then
+    if [[ "$quiet" == "true" ]]; then
       printf '%s' "$results" | jq -r "${_jq_mlx_def}"'
         [.[] | select(has_mlx)][0:'"${limit}"'][] | .modelId'
     else
@@ -215,15 +201,7 @@ cmd_search() {
     return 0
   fi
 
-  if [[ "$json" == "true" ]]; then
-    if [[ "$quants" == "true" ]]; then
-      printf '%s' "$results" | jq "${_jq_quants_def}"'
-        [.[] | select(has_gguf) | {name: .modelId, downloads: .downloads, likes: .likes, quants: quants, default_quant: default_quant}][0:'"${limit}"']'
-    else
-      printf '%s' "$results" | jq "${_jq_quants_def}"'
-        [.[] | select(has_gguf) | {name: .modelId, downloads: .downloads, likes: .likes}][0:'"${limit}"']'
-    fi
-  elif [[ "$quiet" == "true" ]]; then
+  if [[ "$quiet" == "true" ]]; then
     if [[ "$quants" == "true" ]]; then
       printf '%s' "$results" | jq -r "${_jq_quants_def}"'
         [.[] | select(has_gguf)][0:'"${limit}"'][] | .modelId as $m | (quants | if length > 0 then .[] | ($m + ":" + .) else $m end)'
@@ -238,8 +216,15 @@ cmd_search() {
       # field splitting even when values contain spaces.
       printf '%s' "$results" \
         | jq -r "${_jq_quants_def}"'
-            [.[] | select(has_gguf)][0:'"${limit}"'][] | [.modelId, (.downloads // 0 | tostring), (.likes // 0 | tostring), (default_quant as $dq | quants | map(if . == $dq then "*" + . else . end) | join(" "))] | @tsv' \
-        | _print_tsv_table 'lrrl' $'MODEL\tDOWNLOADS\tLIKES\tQUANTS'
+            [.[] | select(has_gguf)][0:'"${limit}"'][] |
+            .modelId as $model |
+            [
+              [$model, (.downloads // 0 | tostring), (.likes // 0 | tostring)],
+              (quants[]? | ["  " + $model + ":" + ., "", ""])
+            ]
+            | .[]
+            | @tsv' \
+        | _print_tsv_table 'lrr' $'MODEL\tDOWNLOADS\tLIKES'
     else
       printf '%s' "$results" \
         | jq -r "${_jq_quants_def}"'
