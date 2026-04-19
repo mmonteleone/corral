@@ -3,21 +3,20 @@
 
 cmd_search_usage() {
   cat <<EOF
-Usage: $SCRIPT_NAME search [--backend <mlx|llama.cpp>] <QUERY> [--sort <by>] [--limit <n>] [--quants] [--quiet]
+Usage: $SCRIPT_NAME search [--backend <mlx|llama.cpp>] [QUERY] [--sort <by>] [--limit <n>] [--quants] [--quiet]
 
 Arguments:
-  QUERY         Search term (e.g. "gemma", "qwen", "llama")
+  QUERY         Optional search term (e.g. "gemma", "qwen", "llama")
 
 Searches HuggingFace for backend-compatible models.
-On macOS Apple Silicon, both GGUF (llama.cpp) and MLX-compatible models are
-returned by default. Use --backend to restrict to a single type.
-Results include a TYPE column when showing mixed backend results.
+If --backend is omitted, the platform default backend is used: MLX on macOS
+Apple Silicon, otherwise llama.cpp.
 
 Options:
   --backend <backend>
-                Backend search mode: llama.cpp (GGUF-focused) or mlx (MLX-friendly models).
-                If omitted on macOS Apple Silicon, searches both types.
-  --sort <by>   Sort order: trending (default), downloads, likes, newest.
+                Backend search mode: llama.cpp (filter=gguf) or mlx (filter=mlx).
+                If omitted, defaults to the platform backend.
+  --sort <by>   Sort order: trending (default), downloads, newest.
   --limit <n>   Maximum number of results. Defaults to 20.
   --quants      llama.cpp only. Also show available quant variants per model
                 With --quiet: prints one MODEL:QUANT per line when quants exist,
@@ -36,18 +35,8 @@ EOF
 #                 then the lexicographically first GGUF found.
 # shellcheck disable=SC2016  # $ signs are jq regex anchors, not bash variables
 _jq_quants_def='def quant_rank: if test("^F32$") then -32 elif test("^(BF16|F16)$") then -16 elif test("^(?:[A-Z]{2}[-_])?I?Q[0-9]+") then (capture("^(?:[A-Z]{2}[-_])?I?Q(?<n>[0-9]+)") | .n | tonumber | -.) else 0 end; def gguf_files: [.siblings[]? | .rfilename | select(type == "string" and test("[.]gguf$"; "i"))]; def has_gguf_tag: (((.tags // []) | map(ascii_downcase) | index("gguf")) != null); def has_gguf: ((gguf_files | length > 0) or ((.library_name // "" | ascii_downcase) == "gguf") or has_gguf_tag); def quants: [gguf_files[] | split("/") | last | gsub("[.]gguf$"; "") | gsub("-[0-9]+-of-[0-9]+$"; "") | (capture("[-._](?<q>(?:[A-Z]{2}[-_])?(?:I?Q[0-9]+(?:_[A-Z0-9]+)*|F16|BF16|F32))$")? | .q) | select(type == "string")] | unique | sort_by(quant_rank); def default_quant: gguf_files as $files | ((([$files[] | select(test("Q4_K_M[.-]"; "i"))] | sort | .[0]) // ([$files[] | select(test("Q4_0[.-]"; "i"))] | sort | .[0]) // ($files | sort | .[0])) as $f | if $f != null then (($f | split("/") | last | gsub("[.]gguf$"; "") | gsub("-[0-9]+-of-[0-9]+$"; "")) as $stem | (($stem | capture("[-._](?<q>(?:[A-Z]{2}[-_])?(?:I?Q[0-9]+(?:_[A-Z0-9]+)*|F16|BF16|F32))$")? | .q) // $stem)) else null end);'
-_jq_mlx_def='def has_mlx: (((.modelId // "") | startswith("mlx-community/")) or (((.tags // []) | map(ascii_downcase) | index("mlx")) != null) or ((.library_name // "" | ascii_downcase) == "mlx"));'
-
-# Combined model-type classifier: "llama.cpp", "mlx", or "both".
-# shellcheck disable=SC2016  # $ signs are jq expressions, not bash variables
-_jq_combined_def="${_jq_quants_def}${_jq_mlx_def}"'def model_type: if (has_gguf and has_mlx) then "both" elif has_gguf then "llama.cpp" elif has_mlx then "mlx" else "unknown" end;'
 
 cmd_search() {
-  if [[ $# -eq 0 ]]; then
-    cmd_search_usage
-    return 1
-  fi
-
   local BACKEND_FLAG=""
   local query=""
   local sort_by="trending"
@@ -76,24 +65,15 @@ cmd_search() {
     esac
   done
 
-  if [[ -z "$query" ]]; then
-    cmd_search_usage >&2
-    return 1
-  fi
-
-  # Determine effective backend and whether to run a combined search.
-  # Combined mode: no explicit backend (flag or env) AND on Apple Silicon.
+  # Search always uses a single backend-specific server-side filter.
   local BACKEND=""
-  local COMBINED_SEARCH="false"
   if [[ -n "$BACKEND_FLAG" ]]; then
     BACKEND="$(resolve_backend "$BACKEND_FLAG")"
-  elif _is_mlx_platform; then
-    COMBINED_SEARCH="true"
   else
-    BACKEND="llama.cpp"
+    BACKEND="$(resolve_backend)"
   fi
 
-  if [[ "$COMBINED_SEARCH" == "false" && "$BACKEND" == "mlx" && "$quants" == "true" ]]; then
+  if [[ "$BACKEND" == "mlx" && "$quants" == "true" ]]; then
     echo "Warning: --quants is only supported for llama.cpp/GGUF search; ignoring for MLX." >&2
     quants="false"
   fi
@@ -105,9 +85,8 @@ cmd_search() {
   case "$sort_by" in
     trending)  api_sort="trendingScore" ;;
     downloads) api_sort="downloads" ;;
-    likes)     api_sort="likes" ;;
     newest)    api_sort="lastModified" ;;
-    *)         die "unknown sort value '${sort_by}': must be trending, downloads, likes, or newest" ;;
+    *)         die "unknown sort value '${sort_by}': must be trending, downloads, or newest" ;;
   esac
 
   require_cmds curl jq
@@ -116,20 +95,21 @@ cmd_search() {
   local auth_header=()
   [[ -n "$hf_token" ]] && auth_header=(-H "Authorization: Bearer ${hf_token}")
 
-  # URL-encode the query string using jq's built-in @uri formatter, avoiding
-  # a dependency on python, perl, or other external URL-encoding utilities.
-  local encoded_query
-  encoded_query="$(printf '%s' "$query" | jq -Rr @uri)"
-
-  # full=true: include sibling (file list) data needed for quant extraction and filtering.
-  # Fetch more than the requested limit so optional quant details still have rich metadata.
-  local fetch_limit=$(( limit * 5 ))
-  (( fetch_limit < 200 )) && fetch_limit=200
-  (( fetch_limit > 500 )) && fetch_limit=500
-  local url="https://huggingface.co/api/models?search=${encoded_query}&sort=${api_sort}&direction=-1&limit=${fetch_limit}&full=true"
-  if [[ "$COMBINED_SEARCH" == "false" && "$BACKEND" == "llama.cpp" ]]; then
-    url+="&library=gguf"
+  local base_url="https://huggingface.co/api/models?sort=${api_sort}&direction=-1&full=true"
+  if [[ -n "$query" ]]; then
+    # URL-encode the query string using jq's built-in @uri formatter, avoiding
+    # a dependency on python, perl, or other external URL-encoding utilities.
+    local encoded_query
+    encoded_query="$(printf '%s' "$query" | jq -Rr @uri)"
+    base_url+="&search=${encoded_query}"
   fi
+  if [[ "$BACKEND" == "llama.cpp" ]]; then
+    base_url+="&filter=gguf"
+  elif [[ "$BACKEND" == "mlx" ]]; then
+    base_url+="&filter=mlx"
+  fi
+
+  base_url+="&limit=${limit}"
 
   # ${auth_header[@]+"${auth_header[@]}"}: safely expand an array that might
   # be empty under 'set -u'. If auth_header has no elements, this expands to
@@ -142,61 +122,27 @@ cmd_search() {
     --max-time 30 \
     "${auth_header[@]+"${auth_header[@]}"}" \
     -H "User-Agent: ${SCRIPT_NAME}" \
-    "$url")"
+    "$base_url")"
 
   local count
-  if [[ "$COMBINED_SEARCH" == "true" ]]; then
-    count="$(printf '%s' "$results" | jq "${_jq_combined_def}"'
-      [.[] | select(has_gguf or has_mlx)] | length')"
-  elif [[ "$BACKEND" == "mlx" ]]; then
-    count="$(printf '%s' "$results" | jq "${_jq_mlx_def}"'
-      [.[] | select(has_mlx)] | length')"
-  else
-    count="$(printf '%s' "$results" | jq "${_jq_quants_def}"'
-      [.[] | select(has_gguf)] | length')"
-  fi
+  count="$(printf '%s' "$results" | jq 'length')"
 
   if [[ "$count" -eq 0 ]]; then
-    echo "No models found for: $query"
-    return 0
-  fi
-
-  # ── Combined search output ────────────────────────────────────────────────
-  if [[ "$COMBINED_SEARCH" == "true" ]]; then
-    if [[ "$quiet" == "true" ]]; then
-      printf '%s' "$results" | jq -r "${_jq_combined_def}"'
-        [.[] | select(has_gguf or has_mlx)][0:'"${limit}"'][] | .modelId'
-    elif [[ "$quants" == "true" ]]; then
-      printf '%s' "$results" \
-        | jq -r "${_jq_combined_def}"'
-            [.[] | select(has_gguf or has_mlx)][0:'"${limit}"'][] |
-            .modelId as $model |
-            [
-              [$model, model_type, (.downloads // 0 | tostring), (.likes // 0 | tostring)],
-              (if has_gguf then (quants[]? | ["  " + $model + ":" + ., "", "", ""]) else empty end)
-            ]
-            | .[]
-            | @tsv' \
-        | _print_tsv_table 'llrr' $'MODEL\tTYPE\tDOWNLOADS\tLIKES'
+    if [[ -n "$query" ]]; then
+      echo "No models found for: $query"
     else
-      printf '%s' "$results" \
-        | jq -r "${_jq_combined_def}"'
-              [.[] | select(has_gguf or has_mlx)][0:'"${limit}"'][] |
-              [.modelId, model_type, (.downloads // 0 | tostring), (.likes // 0 | tostring)] | @tsv' \
-        | _print_tsv_table 'llrr' $'MODEL\tTYPE\tDOWNLOADS\tLIKES'
+      echo "No models found."
     fi
     return 0
   fi
 
   if [[ "$BACKEND" == "mlx" ]]; then
     if [[ "$quiet" == "true" ]]; then
-      printf '%s' "$results" | jq -r "${_jq_mlx_def}"'
-        [.[] | select(has_mlx)][0:'"${limit}"'][] | .modelId'
+      printf '%s' "$results" | jq -r '.[] | .modelId'
     else
       printf '%s' "$results" \
-        | jq -r "${_jq_mlx_def}"'
-              [.[] | select(has_mlx)][0:'"${limit}"'][] | [.modelId, (.downloads // 0 | tostring), (.likes // 0 | tostring)] | @tsv' \
-        | _print_tsv_table 'lrr' $'MODEL\tDOWNLOADS\tLIKES'
+        | jq -r '.[] | [.modelId, "mlx", (.downloads // 0 | tostring)] | @tsv' \
+        | _print_tsv_table 'llr' $'MODEL\tBACKEND\tDOWNLOADS'
     fi
     return 0
   fi
@@ -204,10 +150,9 @@ cmd_search() {
   if [[ "$quiet" == "true" ]]; then
     if [[ "$quants" == "true" ]]; then
       printf '%s' "$results" | jq -r "${_jq_quants_def}"'
-        [.[] | select(has_gguf)][0:'"${limit}"'][] | .modelId as $m | (quants | if length > 0 then .[] | ($m + ":" + .) else $m end)'
+        .[] | .modelId as $m | (quants | if length > 0 then .[] | ($m + ":" + .) else $m end)'
     else
-      printf '%s' "$results" | jq -r "${_jq_quants_def}"'
-        [.[] | select(has_gguf)][0:'"${limit}"'][] | .modelId'
+      printf '%s' "$results" | jq -r '.[] | .modelId'
     fi
   else
     if [[ "$quants" == "true" ]]; then
@@ -216,20 +161,19 @@ cmd_search() {
       # field splitting even when values contain spaces.
       printf '%s' "$results" \
         | jq -r "${_jq_quants_def}"'
-            [.[] | select(has_gguf)][0:'"${limit}"'][] |
+            .[] |
             .modelId as $model |
             [
-              [$model, (.downloads // 0 | tostring), (.likes // 0 | tostring)],
+              [$model, "llama.cpp", (.downloads // 0 | tostring)],
               (quants[]? | ["  " + $model + ":" + ., "", ""])
             ]
             | .[]
             | @tsv' \
-        | _print_tsv_table 'lrr' $'MODEL\tDOWNLOADS\tLIKES'
+        | _print_tsv_table 'llr' $'MODEL\tBACKEND\tDOWNLOADS'
     else
       printf '%s' "$results" \
-        | jq -r "${_jq_quants_def}"'
-              [.[] | select(has_gguf)][0:'"${limit}"'][] | [.modelId, (.downloads // 0 | tostring), (.likes // 0 | tostring)] | @tsv' \
-        | _print_tsv_table 'lrr' $'MODEL\tDOWNLOADS\tLIKES'
+        | jq -r '.[] | [.modelId, "llama.cpp", (.downloads // 0 | tostring)] | @tsv' \
+        | _print_tsv_table 'llr' $'MODEL\tBACKEND\tDOWNLOADS'
     fi
   fi
 }

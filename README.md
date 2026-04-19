@@ -87,7 +87,7 @@ corral remove coder
 | `serve MODEL\|PROFILE` | OpenAI-compatible server (`llama-server` / `mlx_lm.server`) |
 | `launch TOOL` | Configure and launch `pi` or `opencode` against a running server |
 | `pull MODEL` | Download model artifacts without running |
-| `search QUERY` | Search Hugging Face for compatible models |
+| `search [QUERY]` | Search Hugging Face for compatible models |
 | `browse MODEL` | Open a model's Hugging Face page in the browser |
 | `list` / `ls` | List cached models, profiles, and templates |
 | `remove` / `rm` | Remove cached models or profiles |
@@ -119,11 +119,9 @@ All models are stored in the standard Hugging Face cache (`~/.cache/huggingface/
 ### Search
 
 ```sh
-corral search gemma                                    # trending (default)
-corral search qwen --quants                            # show quant variants
-corral search llama --sort downloads --limit 10
-corral search mistral --quiet                          # one ID per line
-corral search --backend mlx qwen                       # MLX-only models
+corral search --backend llama.cpp gemma            # GGUF-tagged results
+corral search --backend mlx gemma                  # MLX-tagged results
+corral search --backend llama.cpp qwen --quants    # show GGUF quant variants
 ```
 
 ### List and remove

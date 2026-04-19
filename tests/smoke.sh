@@ -149,11 +149,30 @@ set -euo pipefail
 
 url=""
 output=""
+headers_output=""
+
+emit_body() {
+  if [[ -n "$output" ]]; then
+    cat >"$output"
+  else
+    cat
+  fi
+}
+
+write_headers() {
+  if [[ -n "$headers_output" ]]; then
+    cat >"$headers_output"
+  fi
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -o)
       output="$2"
+      shift 2
+      ;;
+    -D)
+      headers_output="$2"
       shift 2
       ;;
     -H|--connect-timeout|--max-time|--retry|--retry-delay)
@@ -178,13 +197,13 @@ printf '%s\n' "$url" >>"${CORRAL_TEST_LOG_DIR}/curl.log"
 
 if [[ "$url" == *"/releases/latest" ]]; then
   tag="$(cat "${CORRAL_TEST_STATE_DIR}/latest-tag")"
-  cat "${CORRAL_TEST_FIXTURES_DIR}/release-${tag}.json"
+  cat "${CORRAL_TEST_FIXTURES_DIR}/release-${tag}.json" | emit_body
   exit 0
 fi
 
 if [[ "$url" == *"/releases/tags/"* ]]; then
   tag="${url##*/}"
-  cat "${CORRAL_TEST_FIXTURES_DIR}/release-${tag}.json"
+  cat "${CORRAL_TEST_FIXTURES_DIR}/release-${tag}.json" | emit_body
   exit 0
 fi
 
@@ -195,11 +214,93 @@ if [[ "$url" == *"/downloads/"* ]]; then
 fi
 
 if [[ "$url" == *"huggingface.co/api/models"* ]]; then
+  query_string="${url#*\?}"
+  search_term=""
+  limit_value=""
+  filters=()
+
+  IFS='&' read -r -a params <<<"$query_string"
+  for param in "${params[@]}"; do
+    case "$param" in
+      search=*) search_term="${param#search=}" ;;
+      limit=*) limit_value="${param#limit=}" ;;
+      filter=*)
+        filter_value="${param#filter=}"
+        IFS=',' read -r -a filter_parts <<<"$filter_value"
+        for filter_part in "${filter_parts[@]}"; do
+          filters+=("$filter_part")
+        done
+        ;;
+    esac
+  done
+
+  cursor=""
+  if [[ "$url" == *"cursor="* ]]; then
+    cursor="${url#*cursor=}"
+    cursor="${cursor%%&*}"
+  fi
+
   fixture="${CORRAL_TEST_FIXTURES_DIR}/hf-search-results.json"
+  if [[ -n "$cursor" ]]; then
+    fixture="${CORRAL_TEST_FIXTURES_DIR}/hf-search-results-${cursor}.json"
+  fi
+
+  next_cursor=""
+  if [[ -z "$cursor" && -f "${CORRAL_TEST_FIXTURES_DIR}/hf-search-results-page2.json" ]]; then
+    next_cursor="page2"
+  elif [[ "$cursor" =~ ^page([0-9]+)$ ]]; then
+    next_page=$((BASH_REMATCH[1] + 1))
+    if [[ -f "${CORRAL_TEST_FIXTURES_DIR}/hf-search-results-page${next_page}.json" ]]; then
+      next_cursor="page${next_page}"
+    fi
+  fi
+
+  if [[ -n "$headers_output" ]]; then
+    if [[ -n "$next_cursor" ]]; then
+      link_url="$url"
+      if [[ "$link_url" == *"cursor="* ]]; then
+        link_url="${link_url%%cursor=*}cursor=${next_cursor}"
+      else
+        link_url+="&cursor=${next_cursor}"
+      fi
+      cat <<EOF_HEADERS | write_headers
+HTTP/2 200
+content-type: application/json; charset=utf-8
+link: <${link_url}>; rel="next"
+EOF_HEADERS
+    else
+      cat <<'EOF_HEADERS' | write_headers
+HTTP/2 200
+content-type: application/json; charset=utf-8
+EOF_HEADERS
+    fi
+  fi
+
   if [[ -f "$fixture" ]]; then
-    cat "$fixture"
+    payload="$(cat "$fixture")"
+
+    if [[ -n "$search_term" ]]; then
+      payload="$(printf '%s' "$payload" | jq --arg q "${search_term//+/ }" '[.[] | select((.modelId // "" | ascii_downcase) | contains($q | ascii_downcase))]')"
+    fi
+
+    for filter_name in "${filters[@]}"; do
+      case "$filter_name" in
+        mlx)
+          payload="$(printf '%s' "$payload" | jq '[.[] | select((((.tags // []) | map(ascii_downcase) | index("mlx")) != null) or ((.library_name // "" | ascii_downcase) == "mlx"))]')"
+          ;;
+        gguf)
+          payload="$(printf '%s' "$payload" | jq '[.[] | select((((.tags // []) | map(ascii_downcase) | index("gguf")) != null) or ((.library_name // "" | ascii_downcase) == "gguf"))]')"
+          ;;
+      esac
+    done
+
+    if [[ "$limit_value" =~ ^[0-9]+$ ]]; then
+      payload="$(printf '%s' "$payload" | jq '.[0:'"$limit_value"']')"
+    fi
+
+    printf '%s\n' "$payload" | emit_body
   else
-    printf '[]\n'
+    printf '[]\n' | emit_body
   fi
   exit 0
 fi
@@ -2854,6 +2955,7 @@ write_hf_search_fixture() {
     "modelId": "demo/gemma-GGUF",
     "downloads": 12345,
     "likes": 42,
+    "tags": ["gguf"],
     "siblings": [
       {"rfilename": "gemma-Q4_K_M.gguf"},
       {"rfilename": "gemma-Q8_0.gguf"},
@@ -2865,6 +2967,7 @@ write_hf_search_fixture() {
     "modelId": "demo/gemma-small-GGUF",
     "downloads": 6789,
     "likes": 10,
+    "tags": ["gguf"],
     "siblings": [
       {"rfilename": "gemma-small-F16.gguf"}
     ]
@@ -2873,6 +2976,7 @@ write_hf_search_fixture() {
     "modelId": "demo/gemma-raw-GGUF",
     "downloads": 456,
     "likes": 7,
+    "tags": ["gguf"],
     "siblings": [
       {"rfilename": "gemma-raw.gguf"}
     ]
@@ -2904,7 +3008,7 @@ write_hf_search_fixture_mlx() {
     "siblings": []
   },
   {
-    "modelId": "org/mlx-tagged-model",
+    "modelId": "org/qwen-mlx-tagged-model",
     "downloads": 1200,
     "likes": 80,
     "tags": ["MLX", "other"],
@@ -2950,7 +3054,7 @@ test_search_mlx_backend_filters_results() {
     return
   fi
 
-  if ! assert_contains "$out" 'org/mlx-tagged-model'; then
+  if ! assert_contains "$out" 'org/qwen-mlx-tagged-model'; then
     fail 'search --backend mlx filters to mlx-compatible models' "expected mlx-tagged model, got: $out"
     return
   fi
@@ -2960,7 +3064,74 @@ test_search_mlx_backend_filters_results() {
     return
   fi
 
+  local curl_log
+  curl_log="$(cat "${CORRAL_TEST_LOG_DIR}/curl.log")"
+  if ! assert_contains "$curl_log" 'filter=mlx'; then
+    fail 'search --backend mlx filters to mlx-compatible models' "expected filter=mlx in request URL, got: $curl_log"
+    return
+  fi
+
   pass 'search --backend mlx filters to mlx-compatible models'
+}
+
+test_search_mlx_uses_server_side_limit() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  write_hf_search_fixture_mlx "$CORRAL_TEST_FIXTURES_DIR"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search --backend mlx qwen --quiet --limit 2
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'search --backend mlx uses server-side limit' "search failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+
+  if ! assert_contains "$out" 'mlx-community/Qwen2.5-7B-Instruct-4bit'; then
+    fail 'search --backend mlx uses server-side limit' "expected first mlx model, got: $out"
+    return
+  fi
+
+  if ! assert_contains "$out" 'org/qwen-mlx-tagged-model'; then
+    fail 'search --backend mlx uses server-side limit' "expected second mlx model, got: $out"
+    return
+  fi
+
+  local first_line
+  local second_line
+  first_line="$(printf '%s\n' "$out" | sed -n '1p')"
+  second_line="$(printf '%s\n' "$out" | sed -n '2p')"
+
+  if ! assert_eq "$first_line" 'mlx-community/Qwen2.5-7B-Instruct-4bit'; then
+    fail 'search --backend mlx uses server-side limit' "expected first server-limited result, got: $out"
+    return
+  fi
+
+  if ! assert_eq "$second_line" 'org/qwen-mlx-tagged-model'; then
+    fail 'search --backend mlx uses server-side limit' "expected second server-limited result, got: $out"
+    return
+  fi
+
+  if [[ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" != '2' ]]; then
+    fail 'search --backend mlx uses server-side limit' "expected exactly 2 results, got: $out"
+    return
+  fi
+
+  local curl_log
+  curl_log="$(cat "${CORRAL_TEST_LOG_DIR}/curl.log")"
+  if ! assert_contains "$curl_log" 'limit=2'; then
+    fail 'search --backend mlx uses server-side limit' "expected limit=2 in request URL, got: $curl_log"
+    return
+  fi
+
+  if assert_contains "$curl_log" 'cursor='; then
+    fail 'search --backend mlx uses server-side limit' "did not expect cursor pagination in request URL, got: $curl_log"
+    return
+  fi
+
+  pass 'search --backend mlx uses server-side limit'
 }
 
 test_search_mlx_quants_warns_and_ignores() {
@@ -2981,7 +3152,7 @@ test_search_mlx_quants_warns_and_ignores() {
   fi
 
   if assert_contains "$(cat "$stdout_file")" '  mlx-community/Qwen2.5-7B-Instruct-4bit:' || \
-     assert_contains "$(cat "$stdout_file")" '  org/mlx-tagged-model:'; then
+      assert_contains "$(cat "$stdout_file")" '  org/qwen-mlx-tagged-model:'; then
     fail 'search --backend mlx ignores --quants with warning' "did not expect quant child rows in mlx output: $(cat "$stdout_file")"
     return
   fi
@@ -2989,16 +3160,42 @@ test_search_mlx_quants_warns_and_ignores() {
   pass 'search --backend mlx ignores --quants with warning'
 }
 
-test_search_no_query_errors() {
+test_search_no_query_returns_top_results() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search
+  write_hf_search_fixture "$CORRAL_TEST_FIXTURES_DIR"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search --backend llama.cpp --sort downloads --limit 2
   if [[ $RUN_STATUS -ne 0 ]]; then
-    pass 'search without query exits non-zero'
-  else
-    fail 'search without query exits non-zero' 'expected non-zero exit when query is omitted'
+    fail 'search without query returns top sorted results' "search failed: $(cat "$stderr_file")"
+    return
   fi
+
+  local out
+  out="$(cat "$stdout_file")"
+
+  if ! assert_contains "$out" 'demo/gemma-GGUF'; then
+    fail 'search without query returns top sorted results' "expected top result in output, got: $out"
+    return
+  fi
+
+  if ! assert_contains "$out" 'demo/gemma-small-GGUF'; then
+    fail 'search without query returns top sorted results' "expected second result in output, got: $out"
+    return
+  fi
+
+  if assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/curl.log")" '&search='; then
+    fail 'search without query returns top sorted results' 'did not expect search parameter in request URL when query is omitted'
+    return
+  fi
+
+  if ! assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/curl.log")" 'filter=gguf'; then
+    fail 'search without query returns top sorted results' 'expected filter=gguf in request URL'
+    return
+  fi
+
+  pass 'search without query returns top sorted results'
 }
 
 test_search_returns_results() {
@@ -3007,7 +3204,7 @@ test_search_returns_results() {
 
   write_hf_search_fixture "$CORRAL_TEST_FIXTURES_DIR"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search --backend llama.cpp gemma
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'search returns tabular results' "search failed: $(cat "$stderr_file")"
     return
@@ -3018,6 +3215,16 @@ test_search_returns_results() {
 
   if ! assert_contains "$out" 'MODEL'; then
     fail 'search returns tabular results' "expected column header 'MODEL', got: $out"
+    return
+  fi
+
+  if ! assert_contains "$out" 'BACKEND'; then
+    fail 'search returns tabular results' "expected column header 'BACKEND', got: $out"
+    return
+  fi
+
+  if ! assert_contains "$out" 'llama.cpp'; then
+    fail 'search returns tabular results' "expected backend value 'llama.cpp' in output, got: $out"
     return
   fi
 
@@ -3050,7 +3257,7 @@ test_search_quiet() {
 
   write_hf_search_fixture "$CORRAL_TEST_FIXTURES_DIR"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma --quiet
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search --backend llama.cpp gemma --quiet
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'search --quiet prints only names' "search failed: $(cat "$stderr_file")"
     return
@@ -3109,7 +3316,7 @@ test_search_sort_option() {
   write_hf_search_fixture "$CORRAL_TEST_FIXTURES_DIR"
 
   # Default sort should be trendingScore.
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search --backend llama.cpp gemma
   if ! assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/curl.log")" 'sort=trendingScore'; then
     fail 'search default sort is trending' "expected sort=trendingScore in request URL"
     return
@@ -3117,7 +3324,7 @@ test_search_sort_option() {
   pass 'search default sort is trending'
 
   # --sort downloads should pass sort=downloads to the API.
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma --sort downloads
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search --backend llama.cpp gemma --sort downloads
   if ! assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/curl.log")" 'sort=downloads'; then
     fail 'search --sort downloads' "expected sort=downloads in request URL"
     return
@@ -3125,7 +3332,7 @@ test_search_sort_option() {
   pass 'search --sort downloads'
 
   # --sort newest should map to lastModified in the URL.
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma --sort newest
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search --backend llama.cpp gemma --sort newest
   if ! assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/curl.log")" 'sort=lastModified'; then
     fail 'search --sort newest maps to lastModified' "expected sort=lastModified in request URL"
     return
@@ -3133,11 +3340,19 @@ test_search_sort_option() {
   pass 'search --sort newest maps to lastModified'
 
   # Invalid sort value should error.
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma --sort bogus
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search --backend llama.cpp gemma --sort bogus
   if [[ $RUN_STATUS -ne 0 ]] && assert_contains "$(cat "$stderr_file")" 'unknown sort value'; then
     pass 'search --sort rejects invalid value'
   else
     fail 'search --sort rejects invalid value' "expected non-zero exit and error for unknown sort"
+  fi
+
+  # likes is no longer a supported sort value.
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search --backend llama.cpp gemma --sort likes
+  if [[ $RUN_STATUS -ne 0 ]] && assert_contains "$(cat "$stderr_file")" 'unknown sort value'; then
+    pass 'search --sort likes is rejected'
+  else
+    fail 'search --sort likes is rejected' 'expected non-zero exit and error for removed likes sort'
   fi
 }
 
@@ -3147,7 +3362,7 @@ test_search_quants_tabular() {
 
   write_hf_search_fixture "$CORRAL_TEST_FIXTURES_DIR"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma --quants
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search --backend llama.cpp gemma --quants
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'search --quants tabular output' "search failed: $(cat "$stderr_file")"
     return
@@ -3156,13 +3371,23 @@ test_search_quants_tabular() {
   local out
   out="$(cat "$stdout_file")"
 
-  if ! assert_contains "$out" 'DOWNLOADS' || ! assert_contains "$out" 'LIKES'; then
-    fail 'search --quants tabular output' "expected standard table headers, got: $out"
+  if ! assert_contains "$out" 'DOWNLOADS'; then
+    fail 'search --quants tabular output' "expected DOWNLOADS header, got: $out"
     return
   fi
 
-  if assert_contains "$out" 'QUANTS'; then
-    fail 'search --quants tabular output' "did not expect QUANTS column header, got: $out"
+  if ! assert_contains "$out" 'BACKEND'; then
+    fail 'search --quants tabular output' "expected BACKEND header, got: $out"
+    return
+  fi
+
+  if ! assert_contains "$out" 'llama.cpp'; then
+    fail 'search --quants tabular output' "expected backend value 'llama.cpp' in output, got: $out"
+    return
+  fi
+
+  if assert_contains "$out" 'LIKES' || assert_contains "$out" 'QUANTS'; then
+    fail 'search --quants tabular output' "did not expect LIKES or QUANTS column headers, got: $out"
     return
   fi
 
@@ -3195,7 +3420,7 @@ test_search_quants_quiet() {
 
   write_hf_search_fixture "$CORRAL_TEST_FIXTURES_DIR"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma --quants --quiet
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search --backend llama.cpp gemma --quants --quiet
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'search --quants --quiet prints MODEL:QUANT lines' "search failed: $(cat "$stderr_file")"
     return
@@ -3228,7 +3453,7 @@ test_search_default_quant_tabular() {
 
   write_hf_search_fixture "$CORRAL_TEST_FIXTURES_DIR"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma --quants
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search --backend llama.cpp gemma --quants
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'search --quants tabular marks default quant' "search failed: $(cat "$stderr_file")"
     return
@@ -3253,52 +3478,42 @@ test_search_default_quant_tabular() {
   pass 'search --quants tabular marks default quant'
 }
 
-test_combined_search_quants_flow() {
+test_search_default_backend_quants_warns_on_apple_silicon() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
 
   write_mock_uname "${TEST_DIR}/bin/uname" "Darwin" "arm64"
 
-  write_hf_search_fixture_combined "$CORRAL_TEST_FIXTURES_DIR"
+  write_hf_search_fixture_mlx "$CORRAL_TEST_FIXTURES_DIR"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma --quants
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search qwen --quants
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'combined search --quants renders child rows' "search failed: $(cat "$stderr_file")"
+    fail 'search default backend warns for quants on Apple Silicon' "search failed: $(cat "$stderr_file")"
     return
   fi
 
-  local out
-  out="$(cat "$stdout_file")"
-
-  if ! assert_contains "$out" 'TYPE'; then
-    fail 'combined search --quants renders child rows' "expected TYPE column header, got: $out"
+  if ! assert_contains "$(cat "$stderr_file")" '--quants is only supported for llama.cpp/GGUF search'; then
+    fail 'search default backend warns for quants on Apple Silicon' "expected MLX quant warning, got: $(cat "$stderr_file")"
     return
   fi
 
-  if assert_contains "$out" 'QUANTS'; then
-    fail 'combined search --quants renders child rows' "did not expect QUANTS column header, got: $out"
+  if ! assert_contains "$(cat "$stdout_file")" 'BACKEND'; then
+    fail 'search default backend warns for quants on Apple Silicon' "expected BACKEND header, got: $(cat "$stdout_file")"
     return
   fi
 
-  if ! assert_contains "$out" $'  demo/gemma-GGUF:Q4_K_M'; then
-    fail 'combined search --quants renders child rows' "expected GGUF quant child row, got: $out"
+  if ! assert_contains "$(cat "$stdout_file")" 'mlx'; then
+    fail 'search default backend warns for quants on Apple Silicon' "expected backend value 'mlx' in output, got: $(cat "$stdout_file")"
     return
   fi
 
-  if ! assert_contains "$out" $'  demo/gemma-both:Q4_K_M'; then
-    fail 'combined search --quants renders child rows' "expected mixed-model quant child row, got: $out"
+  if assert_contains "$(cat "$stdout_file")" '  mlx-community/Qwen2.5-7B-Instruct-4bit:' || \
+     assert_contains "$(cat "$stdout_file")" '  org/qwen-mlx-tagged-model:'; then
+    fail 'search default backend warns for quants on Apple Silicon' "did not expect quant child rows in output: $(cat "$stdout_file")"
     return
   fi
 
-  if printf '%s\n' "$out" | awk '
-      /^  demo\/gemma-GGUF:Q4_K_M/ { if (NF == 1) found = 1 }
-      /^  demo\/gemma-both:Q4_K_M/ { if (NF == 1) found_both = 1 }
-      END { exit(found && found_both ? 0 : 1) }
-    '; then
-    pass 'combined search --quants renders child rows'
-  else
-    fail 'combined search --quants renders child rows' "expected combined quant child rows to leave sibling columns blank, got: $out"
-  fi
+  pass 'search default backend warns for quants on Apple Silicon'
 }
 
 test_browse_opens_url() {
@@ -4254,49 +4469,6 @@ EOF
 
 # ── combined backend tests ────────────────────────────────────────────────────
 
-write_hf_search_fixture_combined() {
-  local fixtures_dir="$1"
-  cat >"${fixtures_dir}/hf-search-results.json" <<'EOF'
-[
-  {
-    "modelId": "demo/gemma-GGUF",
-    "downloads": 12345,
-    "likes": 42,
-    "library_name": "gguf",
-    "tags": ["gguf"],
-    "siblings": [
-      {"rfilename": "gemma-Q4_K_M.gguf"},
-      {"rfilename": "gemma-Q8_0.gguf"}
-    ]
-  },
-  {
-    "modelId": "mlx-community/gemma-4bit",
-    "downloads": 5000,
-    "likes": 200,
-    "tags": ["mlx", "text-generation"],
-    "siblings": []
-  },
-  {
-    "modelId": "demo/gemma-both",
-    "downloads": 3000,
-    "likes": 90,
-    "tags": ["mlx", "gguf"],
-    "siblings": [
-      {"rfilename": "gemma-both-Q4_K_M.gguf"}
-    ]
-  },
-  {
-    "modelId": "org/transformers-only",
-    "downloads": 9999,
-    "likes": 400,
-    "library_name": "transformers",
-    "tags": ["transformers"],
-    "siblings": [{"rfilename": "model.safetensors"}]
-  }
-]
-EOF
-}
-
 test_combined_install_flow() {
   local install_root="${HOME}/install-root"
   local stdout_file="${TEST_DIR}/stdout"
@@ -4487,47 +4659,66 @@ test_combined_versions_flow() {
   pass 'combined versions shows mlx section'
 }
 
-test_combined_search_flow() {
+test_search_defaults_to_platform_backend_on_apple_silicon() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
 
   write_mock_uname "${TEST_DIR}/bin/uname" "Darwin" "arm64"
 
-  write_hf_search_fixture_combined "$CORRAL_TEST_FIXTURES_DIR"
+  write_hf_search_fixture_mlx "$CORRAL_TEST_FIXTURES_DIR"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search qwen
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'combined search shows TYPE column' "search failed: $(cat "$stderr_file")"
+    fail 'search defaults to platform backend on Apple Silicon' "search failed: $(cat "$stderr_file")"
     return
   fi
 
   local out
   out="$(cat "$stdout_file")"
 
-  if ! assert_contains "$out" 'TYPE'; then
-    fail 'combined search shows TYPE column' "expected TYPE column header, got: $out"
+  if ! assert_contains "$out" 'MODEL'; then
+    fail 'search defaults to platform backend on Apple Silicon' "expected MODEL column header, got: $out"
     return
   fi
 
-  if ! assert_contains "$out" 'demo/gemma-GGUF'; then
-    fail 'combined search includes llama.cpp models' "expected GGUF model in output, got: $out"
+  if ! assert_contains "$out" 'BACKEND'; then
+    fail 'search defaults to platform backend on Apple Silicon' "expected BACKEND column header, got: $out"
     return
   fi
 
-  if ! assert_contains "$out" 'mlx-community/gemma-4bit'; then
-    fail 'combined search includes mlx models' "expected MLX model in output, got: $out"
+  if ! assert_contains "$out" 'mlx-community/Qwen2.5-7B-Instruct-4bit'; then
+    fail 'search defaults to platform backend on Apple Silicon' "expected default MLX result in output, got: $out"
     return
   fi
 
-  if assert_contains "$out" 'org/transformers-only'; then
-    fail 'combined search excludes non-gguf non-mlx models' "did not expect transformers-only model, got: $out"
+  if ! assert_contains "$out" 'org/qwen-mlx-tagged-model'; then
+    fail 'search defaults to platform backend on Apple Silicon' "expected second MLX result in output, got: $out"
     return
   fi
 
-  pass 'combined search shows TYPE column'
-  pass 'combined search includes llama.cpp models'
-  pass 'combined search includes mlx models'
-  pass 'combined search excludes non-gguf non-mlx models'
+  if ! assert_contains "$out" 'mlx'; then
+    fail 'search defaults to platform backend on Apple Silicon' "expected backend value 'mlx' in output, got: $out"
+    return
+  fi
+
+  if assert_contains "$out" 'org/gguf-only-model' || assert_contains "$out" 'org/transformers-model'; then
+    fail 'search defaults to platform backend on Apple Silicon' "did not expect non-MLX results in output, got: $out"
+    return
+  fi
+
+  local curl_log
+  curl_log="$(cat "${CORRAL_TEST_LOG_DIR}/curl.log")"
+  if ! assert_contains "$curl_log" 'filter=mlx'; then
+    fail 'search defaults to platform backend on Apple Silicon' "expected filter=mlx in request URL, got: $curl_log"
+    return
+  fi
+
+  if assert_contains "$curl_log" 'filter=gguf'; then
+    fail 'search defaults to platform backend on Apple Silicon' "did not expect filter=gguf in request URL, got: $curl_log"
+    return
+  fi
+
+  pass 'search defaults to platform backend on Apple Silicon'
 }
 
 main() {
@@ -4726,7 +4917,7 @@ main() {
   test_pull_quant_match_is_case_insensitive
 
   setup_test_env
-  test_search_no_query_errors
+  test_search_no_query_returns_top_results
 
   setup_test_env
   test_search_returns_results
@@ -4750,10 +4941,13 @@ main() {
   test_search_default_quant_tabular
 
   setup_test_env
-  test_combined_search_quants_flow
+  test_search_default_backend_quants_warns_on_apple_silicon
 
   setup_test_env
   test_search_mlx_backend_filters_results
+
+  setup_test_env
+  test_search_mlx_uses_server_side_limit
 
   setup_test_env
   test_search_mlx_quants_warns_and_ignores
@@ -4861,7 +5055,7 @@ main() {
   test_combined_versions_flow
 
   setup_test_env
-  test_combined_search_flow
+  test_search_defaults_to_platform_backend_on_apple_silicon
 
   printf '\n'
   printf 'Passed: %s\n' "$PASS_COUNT"

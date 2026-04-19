@@ -89,7 +89,7 @@ Commands:
   prune                Prune old llama.cpp installs (keeps current version)
   uninstall            Uninstall backend components and optional caches
   status               Show installed backend, platform, and version info
-  search <QUERY>       Search backend-compatible models (GGUF for llama.cpp, MLX-friendly for mlx)
+  search [QUERY]       Search Hugging Face models
   browse <MODEL_NAME>  Open a model's HuggingFace page in your browser
   pull <MODEL_NAME>    Download (prefetch) model artifacts without running
   list (ls)            List backend-scoped model cache entries plus profiles and templates
