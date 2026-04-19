@@ -75,6 +75,25 @@ run_cmd_with_input() {
   set -e
 }
 
+run_cmd_tty() {
+  local stdout_file="$1"
+  local stderr_file="$2"
+  shift 2
+
+  local command_str
+  printf -v command_str '%q ' "$@"
+  command_str="${command_str% }"
+
+  set +e
+  if script -q /dev/null true >/dev/null 2>&1; then
+    script -q "$stdout_file" "$@" >/dev/null 2>"$stderr_file"
+  else
+    script -q -e -c "$command_str" "$stdout_file" >/dev/null 2>"$stderr_file"
+  fi
+  RUN_STATUS=$?
+  set -e
+}
+
 create_fixture_tarball() {
   local fixtures_dir="$1"
   local tag="$2"
@@ -2396,26 +2415,30 @@ test_list_shows_quant_variants() {
   pass 'list shows quant variants'
 }
 
-test_list_json_includes_quant() {
-  local stdout_file="${TEST_DIR}/stdout"
+test_list_colors_model_size_when_tty() {
+  local stdout_file="${TEST_DIR}/typescript"
   local stderr_file="${TEST_DIR}/stderr"
+  local green=$'\033[32m'
+  local reset=$'\033[0m'
 
-  create_gguf_fixture "models--demo--test-GGUF" "test-UD-Q6_K.gguf" 1024
+  create_gguf_fixture "models--demo--test-GGUF" "test-Q4_K_M.gguf" 2048
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --json
+  run_cmd_tty "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list
+
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'list --json includes quant field' "list --json failed: $(cat "$stderr_file")"
+    fail 'list colors model size when tty' "list failed under tty: $(cat "$stderr_file")"
     return
   fi
 
-  local quant_val
-  quant_val="$(jq -r '.[0].quant' "$stdout_file")"
-  if [[ "$quant_val" != "UD-Q6_K" ]]; then
-    fail 'list --json includes quant field' "expected quant 'UD-Q6_K', got '$quant_val'"
+  local out
+  out="$(cat "$stdout_file")"
+
+  if ! assert_contains "$out" "${green}4.0K${reset}"; then
+    fail 'list colors model size when tty' "expected green size output, got: $out"
     return
   fi
 
-  pass 'list --json includes quant field'
+  pass 'list colors model size when tty'
 }
 
 test_list_quiet_includes_quant() {
@@ -2521,61 +2544,37 @@ test_list_models_profiles_scopes() {
   pass 'list scope flags filter sections'
 }
 
-test_list_json_and_quiet_include_profiles() {
+test_list_quiet_includes_profiles_and_sections() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
 
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
 
-  create_gguf_fixture "models--demo--jsonq-GGUF" "jsonq-UD-Q6_K.gguf" 1024
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set jcoder 'demo/jsonq-GGUF:UD-Q6_K'
+  create_gguf_fixture "models--demo--quietq-GGUF" "quietq-UD-Q6_K.gguf" 1024
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set jcoder 'demo/quietq-GGUF:UD-Q6_K'
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'list json/quiet include profiles and sections' "profile set failed: $(cat "$stderr_file")"
-    return
-  fi
-
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --json
-  if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'list json/quiet include profiles and sections' "list --json failed: $(cat "$stderr_file")"
-    return
-  fi
-
-  local model_count profile_count
-  model_count="$(jq '[ .[] | select(.kind == "MODEL") ] | length' "$stdout_file")"
-  profile_count="$(jq '[ .[] | select(.kind == "PROFILE") ] | length' "$stdout_file")"
-  if [[ "$model_count" -lt 1 || "$profile_count" -lt 1 ]]; then
-    fail 'list json/quiet include profiles and sections' "expected MODEL and PROFILE records in json, got: $(cat "$stdout_file")"
+    fail 'list quiet include profiles and sections' "profile set failed: $(cat "$stderr_file")"
     return
   fi
 
   run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --quiet
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'list json/quiet include profiles and sections' "list --quiet failed: $(cat "$stderr_file")"
+    fail 'list quiet include profiles and sections' "list --quiet failed: $(cat "$stderr_file")"
     return
   fi
 
   local quiet_out
   quiet_out="$(cat "$stdout_file")"
-  if ! assert_contains "$quiet_out" 'demo/jsonq-GGUF:UD-Q6_K'; then
-    fail 'list json/quiet include profiles and sections' "expected model spec in quiet output, got: $quiet_out"
+  if ! assert_contains "$quiet_out" 'demo/quietq-GGUF:UD-Q6_K'; then
+    fail 'list quiet include profiles and sections' "expected model spec in quiet output, got: $quiet_out"
     return
   fi
   if ! assert_contains "$quiet_out" 'jcoder'; then
-    fail 'list json/quiet include profiles and sections' "expected profile name in quiet output, got: $quiet_out"
+    fail 'list quiet include profiles and sections' "expected profile name in quiet output, got: $quiet_out"
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --json --profiles
-  if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'list json/quiet include profiles and sections' "list --json --profiles failed: $(cat "$stderr_file")"
-    return
-  fi
-  if ! assert_eq "$(jq '[ .[] | select(.kind != "PROFILE") ] | length' "$stdout_file")" '0'; then
-    fail 'list json/quiet include profiles and sections' "expected only PROFILE records when scoped, got: $(cat "$stdout_file")"
-    return
-  fi
-
-  pass 'list json/quiet include profiles and sections'
+  pass 'list quiet include profiles and sections'
 }
 
 test_list_includes_templates_section() {
@@ -2646,49 +2645,36 @@ test_list_templates_scope() {
   pass 'list --templates scopes output'
 }
 
-test_list_json_and_quiet_include_templates() {
+test_list_quiet_includes_templates() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
 
   export CORRAL_TEMPLATES_DIR="${HOME}/.config/corral/templates"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template set jsonqtmp user/tmpl-model:Q4_K -- --temp 0.5
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template set quiettmp user/tmpl-model:Q4_K -- --temp 0.5
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'list json/quiet include templates' "template-set failed: $(cat "$stderr_file")"
-    return
-  fi
-
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --json
-  if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'list json/quiet include templates' "list --json failed: $(cat "$stderr_file")"
-    return
-  fi
-
-  local template_count
-  template_count="$(jq '[ .[] | select(.kind == "TEMPLATE") ] | length' "$stdout_file")"
-  if [[ "$template_count" -lt 1 ]]; then
-    fail 'list json/quiet include templates' "expected TEMPLATE records in json, got: $(cat "$stdout_file")"
+    fail 'list quiet include templates' "template-set failed: $(cat "$stderr_file")"
     return
   fi
 
   run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --quiet --templates
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'list json/quiet include templates' "list --quiet --templates failed: $(cat "$stderr_file")"
+    fail 'list quiet include templates' "list --quiet --templates failed: $(cat "$stderr_file")"
     return
   fi
 
   local quiet_out
   quiet_out="$(cat "$stdout_file")"
-  if ! assert_contains "$quiet_out" 'jsonqtmp'; then
-    fail 'list json/quiet include templates' "expected user template name in quiet output, got: $quiet_out"
+  if ! assert_contains "$quiet_out" 'quiettmp'; then
+    fail 'list quiet include templates' "expected user template name in quiet output, got: $quiet_out"
     return
   fi
   if ! assert_contains "$quiet_out" 'chat' || ! assert_contains "$quiet_out" 'code'; then
-    fail 'list json/quiet include templates' "expected built-in template names in quiet output, got: $quiet_out"
+    fail 'list quiet include templates' "expected built-in template names in quiet output, got: $quiet_out"
     return
   fi
 
-  pass 'list json/quiet include templates'
+  pass 'list quiet include templates'
 }
 
 test_remove_specific_quant() {
@@ -2983,7 +2969,7 @@ test_search_mlx_quants_warns_and_ignores() {
 
   write_hf_search_fixture_mlx "$CORRAL_TEST_FIXTURES_DIR"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search --backend mlx qwen --quants --json
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search --backend mlx qwen --quants
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'search --backend mlx ignores --quants with warning' "search failed: $(cat "$stderr_file")"
     return
@@ -2994,8 +2980,9 @@ test_search_mlx_quants_warns_and_ignores() {
     return
   fi
 
-  if [[ "$(jq '[ .[] | select(has("quants")) ] | length' "$stdout_file")" -ne 0 ]]; then
-    fail 'search --backend mlx ignores --quants with warning' "did not expect quants fields in mlx json output: $(cat "$stdout_file")"
+  if assert_contains "$(cat "$stdout_file")" '  mlx-community/Qwen2.5-7B-Instruct-4bit:' || \
+     assert_contains "$(cat "$stdout_file")" '  org/mlx-tagged-model:'; then
+    fail 'search --backend mlx ignores --quants with warning' "did not expect quant child rows in mlx output: $(cat "$stdout_file")"
     return
   fi
 
@@ -3095,40 +3082,6 @@ test_search_quiet() {
   pass 'search --quiet prints only names'
 }
 
-test_search_json() {
-  local stdout_file="${TEST_DIR}/stdout"
-  local stderr_file="${TEST_DIR}/stderr"
-
-  write_hf_search_fixture "$CORRAL_TEST_FIXTURES_DIR"
-
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma --json
-  if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'search --json output' "search failed: $(cat "$stderr_file")"
-    return
-  fi
-
-  local name_val
-  name_val="$(jq -r '.[0].name' "$stdout_file")"
-  if [[ "$name_val" != 'demo/gemma-GGUF' ]]; then
-    fail 'search --json output' "expected name 'demo/gemma-GGUF', got '$name_val'"
-    return
-  fi
-
-  local dl_val
-  dl_val="$(jq -r '.[0].downloads' "$stdout_file")"
-  if [[ "$dl_val" != '12345' ]]; then
-    fail 'search --json output' "expected downloads '12345', got '$dl_val'"
-    return
-  fi
-
-  if [[ "$(jq 'length' "$stdout_file")" -ne 3 ]]; then
-    fail 'search --json output' "expected 3 GGUF results in fixture output, got: $(cat "$stdout_file")"
-    return
-  fi
-
-  pass 'search --json output'
-}
-
 test_search_empty_results() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
@@ -3147,26 +3100,6 @@ test_search_empty_results() {
   fi
 
   pass 'search empty results'
-}
-
-test_search_empty_results_json() {
-  local stdout_file="${TEST_DIR}/stdout"
-  local stderr_file="${TEST_DIR}/stderr"
-
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search 'xyzzy-nonexistent' --json
-  if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'search empty results --json' "search failed: $(cat "$stderr_file")"
-    return
-  fi
-
-  local val
-  val="$(tr -d '[:space:]' < "$stdout_file")"
-  if [[ "$val" != '[]' ]]; then
-    fail 'search empty results --json' "expected '[]', got: $val"
-    return
-  fi
-
-  pass 'search empty results --json'
 }
 
 test_search_sort_option() {
@@ -3223,28 +3156,33 @@ test_search_quants_tabular() {
   local out
   out="$(cat "$stdout_file")"
 
-  if ! assert_contains "$out" 'QUANTS'; then
-    fail 'search --quants tabular output' "expected QUANTS column header, got: $out"
+  if ! assert_contains "$out" 'DOWNLOADS' || ! assert_contains "$out" 'LIKES'; then
+    fail 'search --quants tabular output' "expected standard table headers, got: $out"
     return
   fi
 
-  if ! assert_contains "$out" 'Q4_K_M'; then
-    fail 'search --quants tabular output' "expected quant 'Q4_K_M' in output, got: $out"
+  if assert_contains "$out" 'QUANTS'; then
+    fail 'search --quants tabular output' "did not expect QUANTS column header, got: $out"
     return
   fi
 
-  if ! assert_contains "$out" 'Q8_0'; then
-    fail 'search --quants tabular output' "expected quant 'Q8_0' in output, got: $out"
+  if ! assert_contains "$out" $'  demo/gemma-GGUF:Q4_K_M'; then
+    fail 'search --quants tabular output' "expected indented quant row for Q4_K_M, got: $out"
     return
   fi
 
-  if ! assert_contains "$out" 'BF16'; then
-    fail 'search --quants tabular output' "expected quant 'BF16' in output (from subdirectory file), got: $out"
+  if ! assert_contains "$out" $'  demo/gemma-GGUF:Q8_0'; then
+    fail 'search --quants tabular output' "expected indented quant row for Q8_0, got: $out"
     return
   fi
 
-  if ! assert_contains "$out" 'F16'; then
-    fail 'search --quants tabular output' "expected quant 'F16' for second model, got: $out"
+  if ! assert_contains "$out" $'  demo/gemma-GGUF:BF16'; then
+    fail 'search --quants tabular output' "expected indented quant row for BF16, got: $out"
+    return
+  fi
+
+  if ! assert_contains "$out" $'  demo/gemma-small-GGUF:F16'; then
+    fail 'search --quants tabular output' "expected indented quant row for F16, got: $out"
     return
   fi
 
@@ -3284,66 +3222,6 @@ test_search_quants_quiet() {
   pass 'search --quants --quiet prints MODEL:QUANT lines'
 }
 
-test_search_quants_json() {
-  local stdout_file="${TEST_DIR}/stdout"
-  local stderr_file="${TEST_DIR}/stderr"
-
-  write_hf_search_fixture "$CORRAL_TEST_FIXTURES_DIR"
-
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma --quants --json
-  if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'search --quants --json quants sorted by bit depth' "search failed: $(cat "$stderr_file")"
-    return
-  fi
-
-  # BF16 (16-bit) should sort before Q8_0 (8-bit) before Q4_K_M (4-bit).
-  local quants
-  quants="$(jq -r '.[0].quants | join(",")' "$stdout_file")"
-  local bf16_pos q8_pos q4_pos
-  bf16_pos="$(jq -r '.[0].quants | index("BF16")' "$stdout_file")"
-  q8_pos="$(jq -r '.[0].quants | index("Q8_0")' "$stdout_file")"
-  q4_pos="$(jq -r '.[0].quants | index("Q4_K_M")' "$stdout_file")"
-
-  if [[ "$bf16_pos" -ge "$q8_pos" || "$q8_pos" -ge "$q4_pos" ]]; then
-    fail 'search --quants --json quants sorted by bit depth' \
-      "expected BF16($bf16_pos) < Q8_0($q8_pos) < Q4_K_M($q4_pos) in: $quants"
-    return
-  fi
-
-  pass 'search --quants --json quants sorted by bit depth'
-}
-
-test_search_default_quant_json() {
-  local stdout_file="${TEST_DIR}/stdout"
-  local stderr_file="${TEST_DIR}/stderr"
-
-  write_hf_search_fixture "$CORRAL_TEST_FIXTURES_DIR"
-
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma --quants --json
-  if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'search --quants --json default_quant field' "search failed: $(cat "$stderr_file")"
-    return
-  fi
-
-  # demo/gemma-GGUF has Q4_K_M — llama.cpp picks Q4_K_M first.
-  local dq
-  dq="$(jq -r '.[0].default_quant' "$stdout_file")"
-  if ! assert_eq "$dq" 'Q4_K_M'; then
-    fail 'search --quants --json default_quant field' "expected Q4_K_M, got: $dq"
-    return
-  fi
-
-  # demo/gemma-small-GGUF has only F16 — fallback to first GGUF alphabetically.
-  local dq2
-  dq2="$(jq -r '.[1].default_quant' "$stdout_file")"
-  if ! assert_eq "$dq2" 'F16'; then
-    fail 'search --quants --json default_quant field' "expected F16 for small model, got: $dq2"
-    return
-  fi
-
-  pass 'search --quants --json default_quant field'
-}
-
 test_search_default_quant_tabular() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
@@ -3359,12 +3237,68 @@ test_search_default_quant_tabular() {
   local out
   out="$(cat "$stdout_file")"
 
-  if ! assert_contains "$out" '*Q4_K_M'; then
-    fail 'search --quants tabular marks default quant' "expected '*Q4_K_M' marker in output, got: $out"
+  if assert_contains "$out" '*Q4_K_M'; then
+    fail 'search --quants tabular marks default quant' "did not expect default-quant marker in output, got: $out"
+    return
+  fi
+
+  if ! printf '%s\n' "$out" | awk '
+      /^  demo\/gemma-GGUF:Q4_K_M/ { if (NF == 1) found = 1 }
+      END { exit(found ? 0 : 1) }
+    '; then
+    fail 'search --quants tabular marks default quant' "expected quant child rows to leave sibling columns blank, got: $out"
     return
   fi
 
   pass 'search --quants tabular marks default quant'
+}
+
+test_combined_search_quants_flow() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  write_mock_uname "${TEST_DIR}/bin/uname" "Darwin" "arm64"
+
+  write_hf_search_fixture_combined "$CORRAL_TEST_FIXTURES_DIR"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma --quants
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'combined search --quants renders child rows' "search failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+
+  if ! assert_contains "$out" 'TYPE'; then
+    fail 'combined search --quants renders child rows' "expected TYPE column header, got: $out"
+    return
+  fi
+
+  if assert_contains "$out" 'QUANTS'; then
+    fail 'combined search --quants renders child rows' "did not expect QUANTS column header, got: $out"
+    return
+  fi
+
+  if ! assert_contains "$out" $'  demo/gemma-GGUF:Q4_K_M'; then
+    fail 'combined search --quants renders child rows' "expected GGUF quant child row, got: $out"
+    return
+  fi
+
+  if ! assert_contains "$out" $'  demo/gemma-both:Q4_K_M'; then
+    fail 'combined search --quants renders child rows' "expected mixed-model quant child row, got: $out"
+    return
+  fi
+
+  if printf '%s\n' "$out" | awk '
+      /^  demo\/gemma-GGUF:Q4_K_M/ { if (NF == 1) found = 1 }
+      /^  demo\/gemma-both:Q4_K_M/ { if (NF == 1) found_both = 1 }
+      END { exit(found && found_both ? 0 : 1) }
+    '; then
+    pass 'combined search --quants renders child rows'
+  else
+    fail 'combined search --quants renders child rows' "expected combined quant child rows to leave sibling columns blank, got: $out"
+  fi
 }
 
 test_browse_opens_url() {
@@ -4750,7 +4684,7 @@ main() {
   test_list_shows_quant_variants
 
   setup_test_env
-  test_list_json_includes_quant
+  test_list_colors_model_size_when_tty
 
   setup_test_env
   test_list_quiet_includes_quant
@@ -4762,7 +4696,7 @@ main() {
   test_list_models_profiles_scopes
 
   setup_test_env
-  test_list_json_and_quiet_include_profiles
+  test_list_quiet_includes_profiles_and_sections
 
   setup_test_env
   test_list_includes_templates_section
@@ -4771,7 +4705,7 @@ main() {
   test_list_templates_scope
 
   setup_test_env
-  test_list_json_and_quiet_include_templates
+  test_list_quiet_includes_templates
 
   setup_test_env
   test_remove_specific_quant
@@ -4801,13 +4735,7 @@ main() {
   test_search_quiet
 
   setup_test_env
-  test_search_json
-
-  setup_test_env
   test_search_empty_results
-
-  setup_test_env
-  test_search_empty_results_json
 
   setup_test_env
   test_search_sort_option
@@ -4819,13 +4747,10 @@ main() {
   test_search_quants_quiet
 
   setup_test_env
-  test_search_quants_json
-
-  setup_test_env
-  test_search_default_quant_json
-
-  setup_test_env
   test_search_default_quant_tabular
+
+  setup_test_env
+  test_combined_search_quants_flow
 
   setup_test_env
   test_search_mlx_backend_filters_results

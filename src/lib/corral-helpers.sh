@@ -98,6 +98,71 @@ require_cmds() {
   done
 }
 
+ANSI_COLOR_RESET=$'\033[0m'
+ANSI_COLOR_BLACK=$'\033[30m'
+ANSI_COLOR_RED=$'\033[31m'
+ANSI_COLOR_GREEN=$'\033[32m'
+ANSI_COLOR_YELLOW=$'\033[33m'
+ANSI_COLOR_BLUE=$'\033[34m'
+ANSI_COLOR_MAGENTA=$'\033[35m'
+ANSI_COLOR_CYAN=$'\033[36m'
+ANSI_COLOR_WHITE=$'\033[37m'
+
+# Return 0 when the target file descriptor is an interactive terminal that
+# should receive ANSI color sequences.
+_stream_supports_color() {
+  local fd="${1:-1}"
+
+  [[ -t "$fd" ]] || return 1
+  [[ -z "${NO_COLOR:-}" ]] || return 1
+  [[ "${TERM:-}" != "dumb" ]] || return 1
+}
+
+# Resolve a symbolic ANSI color name to its escape sequence.
+_ansi_color() {
+  local color_name="$1"
+
+  case "$color_name" in
+    reset) printf '%s' "$ANSI_COLOR_RESET" ;;
+    black) printf '%s' "$ANSI_COLOR_BLACK" ;;
+    red) printf '%s' "$ANSI_COLOR_RED" ;;
+    green) printf '%s' "$ANSI_COLOR_GREEN" ;;
+    yellow) printf '%s' "$ANSI_COLOR_YELLOW" ;;
+    blue) printf '%s' "$ANSI_COLOR_BLUE" ;;
+    magenta) printf '%s' "$ANSI_COLOR_MAGENTA" ;;
+    cyan) printf '%s' "$ANSI_COLOR_CYAN" ;;
+    white) printf '%s' "$ANSI_COLOR_WHITE" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Print text with a named ANSI color unconditionally.
+_wrap_color() {
+  local color_name="$1"
+  local text="$2"
+
+  printf '%s%s%s' "$(_ansi_color "$color_name")" "$text" "$ANSI_COLOR_RESET"
+}
+
+# Print text with a named ANSI color when stdout supports it; otherwise print
+# the original text unchanged.
+_wrap_stdout_color() {
+  local color_name="$1"
+  local text="$2"
+
+  if _stdout_supports_color; then
+    _wrap_color "$color_name" "$text"
+  else
+    printf '%s' "$text"
+  fi
+}
+
+# Return 0 when stdout is an interactive terminal that should receive ANSI
+# color sequences.
+_stdout_supports_color() {
+  _stream_supports_color 1
+}
+
 # Print a tab-separated table with dynamic column widths.
 # Arguments:
 #   $1 = alignment string using 'l' (left) or 'r' (right) per column.
@@ -106,17 +171,31 @@ require_cmds() {
 _print_tsv_table() {
   local alignments="$1"
   local header_tsv="$2"
+  local header_color_start=""
+  local header_color_end=""
+
+  if _stdout_supports_color; then
+    header_color_start="$ANSI_COLOR_CYAN"
+    header_color_end="$ANSI_COLOR_RESET"
+  fi
 
   {
     printf '%s\n' "$header_tsv"
     cat
-  } | awk -v FS='\t' -v OFS='  ' -v alignments="$alignments" '
+  } | awk -v FS='\t' -v OFS='  ' -v alignments="$alignments" \
+      -v header_color_start="$header_color_start" -v header_color_end="$header_color_end" '
     function repeat(ch, count, out, i) {
       out = ""
       for (i = 0; i < count; i++) {
         out = out ch
       }
       return out
+    }
+
+    function visible_length(value, plain) {
+      plain = value
+      gsub(/\033\[[0-9;]*m/, "", plain)
+      return length(plain)
     }
 
     {
@@ -126,8 +205,8 @@ _print_tsv_table() {
       }
       for (i = 1; i <= NF; i++) {
         cells[row_count, i] = $i
-        if (length($i) > widths[i]) {
-          widths[i] = length($i)
+        if (visible_length($i) > widths[i]) {
+          widths[i] = visible_length($i)
         }
       }
     }
@@ -138,6 +217,9 @@ _print_tsv_table() {
       }
 
       for (row = 1; row <= row_count; row++) {
+        if (row == 1 && header_color_start != "") {
+          printf "%s", header_color_start
+        }
         for (col = 1; col <= col_count; col++) {
           value = cells[row, col]
           width = widths[col]
@@ -150,17 +232,10 @@ _print_tsv_table() {
             printf OFS
           }
         }
-        printf "\n"
-
-        if (row == 1) {
-          for (col = 1; col <= col_count; col++) {
-            printf "%-" widths[col] "s", repeat("-", widths[col])
-            if (col < col_count) {
-              printf OFS
-            }
-          }
-          printf "\n"
+        if (row == 1 && header_color_end != "") {
+          printf "%s", header_color_end
         }
+        printf "\n"
       }
     }
   '

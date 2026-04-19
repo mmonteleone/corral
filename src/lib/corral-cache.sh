@@ -394,8 +394,8 @@ quant_is_in_use() {
 
 cmd_list_usage() {
   cat <<EOF
-Usage: $SCRIPT_NAME list [--backend <mlx|llama.cpp>] [--quiet] [--json] [--models] [--profiles] [--templates]
-       $SCRIPT_NAME ls   [--backend <mlx|llama.cpp>] [--quiet] [--json] [--models] [--profiles] [--templates]
+Usage: $SCRIPT_NAME list [--backend <mlx|llama.cpp>] [--quiet] [--models] [--profiles] [--templates]
+  $SCRIPT_NAME ls   [--backend <mlx|llama.cpp>] [--quiet] [--models] [--profiles] [--templates]
 
 Lists backend-scoped cached models plus saved profiles and templates.
 
@@ -410,14 +410,12 @@ Options:
   --profiles Include only profile entries.
   --templates Include only template entries.
   --quiet   Print only model[:quant] identifiers, one per line. Useful for piping.
-  --json    Output as a JSON array with a 'kind' field ('MODEL', 'PROFILE', 'TEMPLATE').
 EOF
 }
 
 cmd_list() {
   local BACKEND_FLAG=""
   local QUIET="false"
-  local JSON="false"
   local SHOW_MODELS="true"
   local SHOW_PROFILES="true"
   local SHOW_TEMPLATES="true"
@@ -427,7 +425,6 @@ cmd_list() {
     case "$1" in
       --backend) BACKEND_FLAG="${2:-}"; shift 2 ;;
       --quiet)   QUIET="true"; shift ;;
-      --json)    JSON="true"; shift ;;
       --models)
         if [[ "$SCOPE_SET" == "false" ]]; then
           SHOW_MODELS="false"
@@ -509,70 +506,19 @@ cmd_list() {
   template_count=${#template_entries[@]}
 
   if [[ "$model_count" -eq 0 && "$profile_count" -eq 0 && "$template_count" -eq 0 ]]; then
-    if [[ "$JSON" == "true" ]]; then
-      echo "[]"
+    if [[ "$SHOW_MODELS" == "true" && "$SHOW_PROFILES" == "true" && "$SHOW_TEMPLATES" == "true" ]]; then
+      echo "No models, profiles, or templates found."
+    elif [[ "$SHOW_MODELS" == "true" ]]; then
+      echo "No models found."
+    elif [[ "$SHOW_PROFILES" == "true" ]]; then
+      echo "No profiles found."
     else
-      if [[ "$SHOW_MODELS" == "true" && "$SHOW_PROFILES" == "true" && "$SHOW_TEMPLATES" == "true" ]]; then
-        echo "No models, profiles, or templates found."
-      elif [[ "$SHOW_MODELS" == "true" ]]; then
-        echo "No models found."
-      elif [[ "$SHOW_PROFILES" == "true" ]]; then
-        echo "No profiles found."
-      else
-        echo "No templates found."
-      fi
+      echo "No templates found."
     fi
     return 0
   fi
 
-  if [[ "$JSON" == "true" ]]; then
-    require_cmds jq
-    local json_lines=()
-    local e
-    if [[ "$model_count" -gt 0 ]]; then
-      for e in "${model_entries[@]}"; do
-        local name quant size backend
-        name="${e%%|*}"
-        local rest="${e#*|}"
-        quant="${rest%%|*}"
-        rest="${rest#*|}"
-        size="${rest%%|*}"
-        backend="${rest#*|}"
-        json_lines+=("MODEL|${name}|${quant}|${size}|${backend}")
-      done
-    fi
-    if [[ "$profile_count" -gt 0 ]]; then
-      for e in "${profile_entries[@]}"; do
-        local pname pmodel
-        pname="${e%%|*}"
-        pmodel="${e#*|}"
-        json_lines+=("PROFILE|${pname}|${pmodel}")
-      done
-    fi
-    if [[ "$template_count" -gt 0 ]]; then
-      for e in "${template_entries[@]}"; do
-        local tname ttype tmodel
-        tname="${e%%|*}"
-        local trest="${e#*|}"
-        ttype="${trest%%|*}"
-        tmodel="${trest#*|}"
-        json_lines+=("TEMPLATE|${tname}|${ttype}|${tmodel}")
-      done
-    fi
-
-    printf '%s\n' "${json_lines[@]}" \
-      | jq -R '
-          split("|")
-          | if .[0] == "MODEL" then
-              {kind: .[0], name: .[1], quant: (if .[2] == "" then null else .[2] end), size: .[3], backend: .[4]}
-            elif .[0] == "PROFILE" then
-              {kind: .[0], name: .[1], model: .[2]}
-            else
-              {kind: .[0], name: .[1], type: .[2], model: .[3]}
-            end
-        ' \
-      | jq -s '.'
-  elif [[ "$QUIET" == "true" ]]; then
+  if [[ "$QUIET" == "true" ]]; then
     if [[ "$model_count" -gt 0 ]]; then
       local e
       for e in "${model_entries[@]}"; do
@@ -607,6 +553,9 @@ cmd_list() {
     fi
   else
     if [[ "$model_count" -gt 0 ]]; then
+      local color_model_sizes="false"
+      _stdout_supports_color && color_model_sizes="true"
+
       {
         local e
         for e in "${model_entries[@]}"; do
@@ -621,6 +570,9 @@ cmd_list() {
             display_name="${name}:${quant}"
           else
             display_name="$name"
+          fi
+          if [[ "$color_model_sizes" == "true" ]]; then
+            size="$(_wrap_color green "$size")"
           fi
           printf '%s\t%s\t%s\n' "$display_name" "$backend" "$size"
         done
