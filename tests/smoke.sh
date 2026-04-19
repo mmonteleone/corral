@@ -2423,7 +2423,7 @@ test_list_colors_model_size_when_tty() {
 
   create_gguf_fixture "models--demo--test-GGUF" "test-Q4_K_M.gguf" 2048
 
-  run_cmd_tty "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list
+  run_cmd_tty "$stdout_file" "$stderr_file" env TERM=xterm-256color bash "$SCRIPT_PATH" list
 
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'list colors model size when tty' "list failed under tty: $(cat "$stderr_file")"
