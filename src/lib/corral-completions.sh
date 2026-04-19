@@ -57,7 +57,7 @@ complete -c $sn -n "__fish_seen_subcommand_from list ls"     -l quiet           
 complete -c $sn -n "__fish_seen_subcommand_from list ls"     -l models           -d 'Show models only'
 complete -c $sn -n "__fish_seen_subcommand_from list ls"     -l profiles         -d 'Show profiles only'
 complete -c $sn -n "__fish_seen_subcommand_from list ls"     -l templates        -d 'Show templates only'
-complete -c $sn -n "__fish_seen_subcommand_from search"      -l sort             -d 'Sort order (trending, downloads, likes, newest)'
+complete -c $sn -n "__fish_seen_subcommand_from search"      -l sort             -d 'Sort order (trending, downloads, newest)'
 complete -c $sn -n "__fish_seen_subcommand_from search"      -l limit            -d 'Maximum number of results'
 complete -c $sn -n "__fish_seen_subcommand_from search"      -l quants           -d 'Show available quant variants'
 complete -c $sn -n "__fish_seen_subcommand_from search"      -l quiet            -d 'Only print model identifiers'
@@ -267,7 +267,7 @@ _corral() {
         search)
           _arguments \
             '--backend[Backend]:backend:(mlx llama.cpp)' \
-            '--sort[Sort order]:by:(trending downloads likes newest)' \
+            '--sort[Sort order]:by:(trending downloads newest)' \
             '--limit[Maximum number of results]:n' \
             '--quants[Show available quant variants]' \
             '--quiet[Only print model identifiers]' ;;
@@ -397,7 +397,7 @@ _${sn//-/_}_completions() {
     --shell) COMPREPLY=(\$(compgen -W "fish zsh bash" -- "\$cur")); COMP_WORDBREAKS="\$_saved_wb"; return ;;
     --arch)  COMPREPLY=(\$(compgen -W "macos-arm64 macos-x86_64 ubuntu-x64 ubuntu-arm64" -- "\$cur")); COMP_WORDBREAKS="\$_saved_wb"; return ;;
     --backend) COMPREPLY=(\$(compgen -W "mlx llama.cpp" -- "\$cur")); COMP_WORDBREAKS="\$_saved_wb"; return ;;
-    --sort)  COMPREPLY=(\$(compgen -W "trending downloads likes newest" -- "\$cur")); COMP_WORDBREAKS="\$_saved_wb"; return ;;
+    --sort)  COMPREPLY=(\$(compgen -W "trending downloads newest" -- "\$cur")); COMP_WORDBREAKS="\$_saved_wb"; return ;;
   esac
   case "\$cmd" in
     install)  COMPREPLY=(\$(compgen -W "--backend --tag --path --arch --shell-profile --no-shell-profile --print-latest-tag" -- "\$cur")) ;;
