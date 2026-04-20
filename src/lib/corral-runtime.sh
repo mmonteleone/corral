@@ -1,4 +1,20 @@
 # Runtime lifecycle helpers for corral.
+#
+# Backend installation, updating, uninstallation, and model execution. Provides:
+#   - llama.cpp lifecycle: _do_install(), _update_llama(), _uninstall_llama_components()
+#   - MLX lifecycle: _do_install_mlx(), _update_mlx(), _uninstall_mlx_components()
+#   - Non-fatal variants: _try_install_mlx(), _try_update_mlx() — used by the
+#     combined (all-backends) paths; warn and return 0 instead of dying.
+#   - Shared model-command prep: _parse_model_command_args(),
+#     _resolve_model_command_context()
+#   - Model pull: cmd_pull(), _pull_mlx()
+#   - Model run: cmd_run(), _run_mlx()
+#   - Model serve: cmd_serve(), _serve_mlx()
+#   - Backend inference: _infer_model_backend() (GGUF-first for run/serve),
+#     _infer_pull_backend() (platform-default for pull)
+#   - Shell profile/completions: install_path(), install_completions()
+#   - Process listing: cmd_ps(), _emit_runtime_process_rows()
+#   - Maintenance: cmd_prune(), cmd_versions(), cmd_status()
 # shellcheck shell=bash
 
 # macOS Gatekeeper places a quarantine extended attribute on files downloaded
@@ -226,6 +242,8 @@ _do_install() {
   local INSTALL_ROOT="$2"
   local ARCH="$3"
   local PROFILE_MODE="$4"
+
+  INSTALL_ROOT="$(_normalize_dir_path "$INSTALL_ROOT")"
 
   local ASSET_NAME="llama-${TAG}-bin-${ARCH}.tar.gz"
   local RELEASE_JSON
@@ -474,9 +492,10 @@ EOF
   esac
 }
 
-# Non-fatal mlx-lm install. Like _do_install_mlx but warns and returns 0
+# Non-fatal mlx-lm install. Mirrors _do_install_mlx but warns and returns 0
 # instead of dying when prerequisites (uv) remain unavailable.
-# Used by the combined (all-backends) install path.
+# Used by the combined (all-backends) install path so that a missing uv does
+# not abort the entire install when only the llama.cpp half was essential.
 # shellcheck disable=SC2329
 _try_install_mlx() {
   require_mlx_platform
@@ -526,20 +545,15 @@ cmd_install() {
     esac
   done
 
-  # Validate --backend if provided.
-  if [[ -n "$BACKEND_FLAG" ]]; then
-    case "$BACKEND_FLAG" in
-      mlx|llama.cpp) ;;
-      *) die "unknown backend '${BACKEND_FLAG}': must be 'mlx' or 'llama.cpp'" ;;
-    esac
-  fi
+  _validate_backend_flag "$BACKEND_FLAG"
 
-  # --backend mlx: install only mlx.
-  if [[ "$BACKEND_FLAG" == "mlx" ]]; then
-    _do_install_mlx
-    install_completions "$PROFILE_MODE" || true
-    return 0
-  fi
+  case "${BACKEND_FLAG:-all}" in
+    mlx)
+      _do_install_mlx
+      install_completions "$PROFILE_MODE" || true
+      return 0
+      ;;
+  esac
 
   # --print-latest-tag is llama.cpp-only.
   if [[ "$PRINT_LATEST_TAG" == "true" ]]; then
@@ -559,22 +573,21 @@ cmd_install() {
 
   [[ -z "$ARCH" ]] && ARCH="$(detect_arch)"
 
-  # ${INSTALL_ROOT/#\~/$HOME}: expand leading tilde. See ensure_llama_in_path.
-  # ${INSTALL_ROOT%/}: strip trailing slash for consistent path joining.
-  INSTALL_ROOT="${INSTALL_ROOT/#\~/$HOME}"
-  INSTALL_ROOT="${INSTALL_ROOT%/}"
-
   _do_install "$TAG" "$INSTALL_ROOT" "$ARCH" "$PROFILE_MODE"
 
-  # When only llama.cpp was requested, stop here.
-  [[ "$BACKEND_FLAG" == "llama.cpp" ]] && return 0
-
-  # Combined path (no --backend): also install mlx if on Apple Silicon.
-  if _is_mlx_platform; then
-    echo
-    echo "Installing MLX backend..."
-    _try_install_mlx
-  fi
+  case "${BACKEND_FLAG:-all}" in
+    llama.cpp)
+      return 0
+      ;;
+    all)
+      # Combined path (no --backend): also install mlx if on Apple Silicon.
+      if _is_mlx_platform; then
+        echo
+        echo "Installing MLX backend..."
+        _try_install_mlx
+      fi
+      ;;
+  esac
 }
 
 cmd_update_usage() {
@@ -615,9 +628,10 @@ _update_mlx() {
   echo "Done."
 }
 
-# Non-fatal mlx update. Unlike _update_mlx, warns and returns 0 instead of dying
-# when mlx-lm is not installed or uv is unavailable.
-# Used by the combined (all-backends) update path.
+# Non-fatal mlx update. Mirrors _update_mlx but warns and returns 0 instead
+# of dying when mlx-lm is not installed or uv is unavailable.
+# Used by the combined (all-backends) update path for the same reason as
+# _try_install_mlx: avoid aborting an otherwise successful llama.cpp update.
 # shellcheck disable=SC2329
 _try_update_mlx() {
   require_mlx_platform
@@ -644,8 +658,7 @@ _update_llama() {
   local ARCH="$2"
   local PROFILE_MODE="$3"
 
-  INSTALL_ROOT="${INSTALL_ROOT/#\~/$HOME}"
-  INSTALL_ROOT="${INSTALL_ROOT%/}"
+  INSTALL_ROOT="$(_normalize_dir_path "$INSTALL_ROOT")"
 
   local CURRENT_LINK="${INSTALL_ROOT}/current"
   local INSTALLED_TAG=""
@@ -694,33 +707,31 @@ cmd_update() {
     esac
   done
 
-  # Validate --backend if provided.
-  if [[ -n "$BACKEND_FLAG" ]]; then
-    case "$BACKEND_FLAG" in
-      mlx|llama.cpp) ;;
-      *) die "unknown backend '${BACKEND_FLAG}': must be 'mlx' or 'llama.cpp'" ;;
-    esac
-  fi
+  _validate_backend_flag "$BACKEND_FLAG"
 
-  if [[ "$BACKEND_FLAG" == "mlx" ]]; then
-    _update_mlx
-    return 0
-  fi
+  case "${BACKEND_FLAG:-all}" in
+    mlx)
+      _update_mlx
+      return 0
+      ;;
+  esac
 
   require_cmds curl jq
   [[ -z "$ARCH" ]] && ARCH="$(detect_arch)"
 
-  if [[ "$BACKEND_FLAG" == "llama.cpp" ]]; then
-    _update_llama "$INSTALL_ROOT" "$ARCH" "$PROFILE_MODE"
-    return 0
-  fi
-
-  # Combined path (no --backend): update llama.cpp and mlx if on Apple Silicon.
-  _update_llama "$INSTALL_ROOT" "$ARCH" "$PROFILE_MODE"
-  if _is_mlx_platform; then
-    echo
-    _try_update_mlx
-  fi
+  case "${BACKEND_FLAG:-all}" in
+    llama.cpp)
+      _update_llama "$INSTALL_ROOT" "$ARCH" "$PROFILE_MODE"
+      ;;
+    all)
+      # Combined path (no --backend): update llama.cpp and mlx if on Apple Silicon.
+      _update_llama "$INSTALL_ROOT" "$ARCH" "$PROFILE_MODE"
+      if _is_mlx_platform; then
+        echo
+        _try_update_mlx
+      fi
+      ;;
+  esac
 }
 
 cmd_status_usage() {
@@ -776,38 +787,42 @@ cmd_status() {
     esac
   done
 
-  INSTALL_ROOT="${INSTALL_ROOT/#\~/$HOME}"
-  INSTALL_ROOT="${INSTALL_ROOT%/}"
+  _validate_backend_flag "$BACKEND_FLAG"
 
   echo "Platform  : $(uname -s)/$(uname -m)"
 
-  if [[ -n "$BACKEND_FLAG" ]]; then
-    local BACKEND
-    BACKEND="$(resolve_backend "$BACKEND_FLAG")"
-    echo "Backend   : $BACKEND"
-    echo
-    if [[ "$BACKEND" == "mlx" ]]; then
-      _status_mlx
-    else
+  case "${BACKEND_FLAG:-all}" in
+    mlx|llama.cpp)
+      local BACKEND
+      BACKEND="$(resolve_backend "$BACKEND_FLAG")"
+      echo "Backend   : $BACKEND"
+      echo
+      if [[ "$BACKEND" == "mlx" ]]; then
+        _status_mlx
+      else
+        _status_llama "$INSTALL_ROOT" "$CHECK_UPDATE"
+      fi
+      ;;
+    all)
+      # Combined path (no --backend): show all supported backends.
+      echo
       _status_llama "$INSTALL_ROOT" "$CHECK_UPDATE"
-    fi
-    return 0
-  fi
 
-  # Combined path (no --backend): show all supported backends.
-  echo
-  _status_llama "$INSTALL_ROOT" "$CHECK_UPDATE"
-
-  if _is_mlx_platform; then
-    echo
-    _status_mlx
-  fi
+      if _is_mlx_platform; then
+        echo
+        _status_mlx
+      fi
+      ;;
+  esac
 }
 
 # Print llama.cpp installation status.
 _status_llama() {
   local INSTALL_ROOT="$1"
   local CHECK_UPDATE="$2"
+
+  INSTALL_ROOT="$(_normalize_dir_path "$INSTALL_ROOT")"
+
   local CURRENT_LINK="${INSTALL_ROOT}/current"
 
   if [[ ! -L "$CURRENT_LINK" && ! -d "$CURRENT_LINK" ]]; then
@@ -921,8 +936,7 @@ _uninstall_llama_components() {
   local INSTALL_ROOT="$1"
   local FORCE="$2"
 
-  INSTALL_ROOT="${INSTALL_ROOT/#\~/$HOME}"
-  INSTALL_ROOT="${INSTALL_ROOT%/}"
+  INSTALL_ROOT="$(_normalize_dir_path "$INSTALL_ROOT")"
 
   if [[ -d "$INSTALL_ROOT" ]]; then
     confirm_destructive_action "removing the llama.cpp installation at ${INSTALL_ROOT}" "$FORCE" || return 1
@@ -985,35 +999,27 @@ cmd_uninstall() {
     esac
   done
 
-  # Validate --backend if provided.
-  if [[ -n "$BACKEND_FLAG" ]]; then
-    case "$BACKEND_FLAG" in
-      mlx|llama.cpp) ;;
-      *) die "unknown backend '${BACKEND_FLAG}': must be 'mlx' or 'llama.cpp'" ;;
-    esac
-  fi
+  _validate_backend_flag "$BACKEND_FLAG"
 
-  if [[ "$BACKEND_FLAG" == "mlx" ]]; then
-    _uninstall_mlx_components "$FORCE" || return 1
-    _uninstall_shared_options "$DELETE_HF_CACHE" "$DELETE_SELF" "$FORCE"
-    return 0
-  fi
+  case "${BACKEND_FLAG:-all}" in
+    mlx)
+      _uninstall_mlx_components "$FORCE" || return 1
+      ;;
+    llama.cpp)
+      _uninstall_llama_components "$INSTALL_ROOT" "$FORCE" || return 1
+      ;;
+    all)
+      # Combined path (no --backend): uninstall all supported backends.
+      if _is_mlx_platform; then
+        echo "--- MLX backend ---"
+        _uninstall_mlx_components "$FORCE" || return 1
+        echo
+      fi
 
-  if [[ "$BACKEND_FLAG" == "llama.cpp" ]]; then
-    _uninstall_llama_components "$INSTALL_ROOT" "$FORCE" || return 1
-    _uninstall_shared_options "$DELETE_HF_CACHE" "$DELETE_SELF" "$FORCE"
-    return 0
-  fi
-
-  # Combined path (no --backend): uninstall all supported backends.
-  if _is_mlx_platform; then
-    echo "--- MLX backend ---"
-    _uninstall_mlx_components "$FORCE" || return 1
-    echo
-  fi
-
-  echo "--- llama.cpp backend ---"
-  _uninstall_llama_components "$INSTALL_ROOT" "$FORCE" || return 1
+      echo "--- llama.cpp backend ---"
+      _uninstall_llama_components "$INSTALL_ROOT" "$FORCE" || return 1
+      ;;
+  esac
 
   # Shared options run once regardless of how many backends were uninstalled.
   _uninstall_shared_options "$DELETE_HF_CACHE" "$DELETE_SELF" "$FORCE"
@@ -1041,8 +1047,7 @@ EOF
 # shellcheck disable=SC2329
 _emit_llama_version_rows() {
   local root="$1"
-  root="${root/#\~/$HOME}"
-  root="${root%/}"
+  root="$(_normalize_dir_path "$root")"
 
   if [[ ! -d "$root" ]]; then
     printf '%s\t%s\t%s\n' 'llama.cpp' '(no installation)' '-'
@@ -1106,32 +1111,26 @@ cmd_versions() {
     esac
   done
 
-  # Validate --backend if provided.
-  if [[ -n "$BACKEND_FLAG" ]]; then
-    case "$BACKEND_FLAG" in
-      mlx|llama.cpp) ;;
-      *) die "unknown backend '${BACKEND_FLAG}': must be 'mlx' or 'llama.cpp'" ;;
-    esac
-  fi
+  _validate_backend_flag "$BACKEND_FLAG"
 
-  if [[ "$BACKEND_FLAG" == "mlx" ]]; then
-    _emit_mlx_version_rows | _print_tsv_table 'lll' $'TYPE\tVERSION\tSTATUS'
-    return 0
-  fi
+  case "${BACKEND_FLAG:-all}" in
+    mlx)
+      _emit_mlx_version_rows | _print_tsv_table 'lll' $'TYPE\tVERSION\tSTATUS'
+      ;;
+    llama.cpp)
+      _emit_llama_version_rows "$INSTALL_ROOT" | _print_tsv_table 'lll' $'TYPE\tVERSION\tSTATUS'
+      ;;
+    all)
+      # Combined path (no --backend): show all installed backends.
+      {
+        _emit_llama_version_rows "$INSTALL_ROOT"
 
-  if [[ "$BACKEND_FLAG" == "llama.cpp" ]]; then
-    _emit_llama_version_rows "$INSTALL_ROOT" | _print_tsv_table 'lll' $'TYPE\tVERSION\tSTATUS'
-    return 0
-  fi
-
-  # Combined path (no --backend): show all installed backends.
-  {
-    _emit_llama_version_rows "$INSTALL_ROOT"
-
-    if _is_mlx_platform; then
-      _emit_mlx_version_rows
-    fi
-  } | _print_tsv_table 'lll' $'TYPE\tVERSION\tSTATUS'
+        if _is_mlx_platform; then
+          _emit_mlx_version_rows
+        fi
+      } | _print_tsv_table 'lll' $'TYPE\tVERSION\tSTATUS'
+      ;;
+  esac
 }
 
 cmd_prune_usage() {
@@ -1164,6 +1163,8 @@ cmd_prune() {
     esac
   done
 
+  _validate_backend_flag "$BACKEND_FLAG"
+
   local BACKEND="llama.cpp"
   if [[ -n "$BACKEND_FLAG" ]]; then
     BACKEND="$(resolve_backend "$BACKEND_FLAG")"
@@ -1174,8 +1175,7 @@ cmd_prune() {
     return 0
   fi
 
-  INSTALL_ROOT="${INSTALL_ROOT/#\~/$HOME}"
-  INSTALL_ROOT="${INSTALL_ROOT%/}"
+  INSTALL_ROOT="$(_normalize_dir_path "$INSTALL_ROOT")"
 
   local current_link="${INSTALL_ROOT}/current"
   local current_dir=""
@@ -1387,11 +1387,23 @@ _pull_mlx() {
 
 # ── run ───────────────────────────────────────────────────────────────────────
 
-# Infer the backend required for a model spec based on local evidence.
-# 1. If the model has GGUF files in the HF cache → llama.cpp
-# 2. Otherwise, for HuggingFace USER/MODEL specs, assume mlx.
-# 3. For non-HF specs, fall back to the platform default.
-# Use --backend to override when the heuristic is wrong.
+# Infer the backend required for run/serve from the model spec plus any local
+# cache evidence.
+#
+# Decision tree, in order:
+#   1. Cached GGUF files under the model's HF cache dir -> llama.cpp
+#      Local cache is the strongest signal because it reflects what was actually
+#      downloaded, not just how the repo is named.
+#   2. Repo name ends in -GGUF -> llama.cpp
+#      This handles uncached but clearly GGUF-scoped HuggingFace repos.
+#   3. Any other USER/MODEL HuggingFace id -> mlx
+#      run/serve prefer the MLX path for non-GGUF repos; callers can override
+#      with --backend when the heuristic is wrong.
+#   4. Non-HF specs (no slash) -> platform default
+#      This catches local names that will later resolve through profiles.
+#
+# See also: _infer_pull_backend(), which uses a simpler heuristic because there
+# is no local cache evidence yet at pull time.
 _infer_model_backend() {
   local model_spec="$1"
   # Strip quant spec: "user/model:Q4_K_M" → "user/model"
@@ -1422,6 +1434,100 @@ _infer_model_backend() {
   # No local evidence; fall back to the platform default.
   # On macOS Apple Silicon this is mlx; everywhere else it is llama.cpp.
   _platform_default_backend
+}
+
+# Parse the shared argument shape used by 'run' and 'serve'.
+#
+# Usage:
+#   _parse_model_command_args [--backend <mlx|llama.cpp>] <MODEL|PROFILE> [-- <extra args...>]
+#
+# Sets:
+#   REPLY_MODEL_COMMAND_BACKEND_FLAG -> raw --backend value, or empty
+#   REPLY_MODEL_COMMAND_MODEL_SPEC   -> model spec or profile name
+#   REPLY_MODEL_COMMAND_EXTRA_ARGS   -> extra backend args after '--'
+#   REPLY_MODEL_COMMAND_ERROR        -> explanatory error string on failure
+_parse_model_command_args() {
+  REPLY_MODEL_COMMAND_BACKEND_FLAG=""
+  REPLY_MODEL_COMMAND_MODEL_SPEC=""
+  REPLY_MODEL_COMMAND_EXTRA_ARGS=()
+  REPLY_MODEL_COMMAND_ERROR=""
+
+  if [[ $# -gt 0 && "$1" == "--backend" ]]; then
+    if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == "--" ]]; then
+      REPLY_MODEL_COMMAND_ERROR="missing value for --backend"
+      return 1
+    fi
+    REPLY_MODEL_COMMAND_BACKEND_FLAG="$2"
+    _validate_backend_flag "$REPLY_MODEL_COMMAND_BACKEND_FLAG"
+    shift 2
+  fi
+
+  if [[ $# -eq 0 ]]; then
+    REPLY_MODEL_COMMAND_ERROR="missing model or profile name"
+    return 1
+  fi
+
+  if [[ "$1" == "--" || "$1" == -* ]]; then
+    REPLY_MODEL_COMMAND_ERROR="Unknown argument: $1"
+    return 1
+  fi
+
+  REPLY_MODEL_COMMAND_MODEL_SPEC="$1"
+  shift
+
+  if [[ $# -eq 0 ]]; then
+    return 0
+  fi
+
+  if [[ "$1" != "--" ]]; then
+    REPLY_MODEL_COMMAND_ERROR="Unknown argument: $1"
+    return 1
+  fi
+
+  shift
+  REPLY_MODEL_COMMAND_EXTRA_ARGS=("$@")
+}
+
+# Resolve the model/backend/profile context shared by 'run' and 'serve'.
+#
+# Profile names are loaded twice on purpose:
+#   1. First pass without backend filtering to read the model= line so backend
+#      inference has the real HuggingFace id to inspect.
+#   2. Second pass with the resolved backend to apply backend-scoped flags.
+#
+# Sets:
+#   REPLY_MODEL_COMMAND_BACKEND      -> resolved backend (mlx or llama.cpp)
+#   REPLY_MODEL_COMMAND_MODEL_SPEC   -> final HuggingFace model id, with quant if any
+#   REPLY_MODEL_COMMAND_PROFILE_ARGS -> backend-filtered profile args array
+_resolve_model_command_context() {
+  local mode="$1"
+  local backend_flag="$2"
+  local model_or_profile="$3"
+  local profile_name=""
+
+  REPLY_MODEL_COMMAND_BACKEND=""
+  REPLY_MODEL_COMMAND_MODEL_SPEC="$model_or_profile"
+  REPLY_MODEL_COMMAND_PROFILE_ARGS=()
+
+  # If the spec contains no '/', it cannot be a USER/MODEL HuggingFace id.
+  # Treat it as a saved profile name and load its model + flags in two passes.
+  if [[ "$model_or_profile" != */* ]]; then
+    profile_name="$model_or_profile"
+    _load_profile "$profile_name" "$mode"
+    REPLY_MODEL_COMMAND_MODEL_SPEC="$REPLY_PROFILE_MODEL"
+  fi
+
+  if [[ -n "$backend_flag" ]]; then
+    REPLY_MODEL_COMMAND_BACKEND="$(resolve_backend "$backend_flag")"
+  else
+    REPLY_MODEL_COMMAND_BACKEND="$(_infer_model_backend "$REPLY_MODEL_COMMAND_MODEL_SPEC")"
+  fi
+
+  if [[ -n "$profile_name" ]]; then
+    _load_profile "$profile_name" "$mode" "$REPLY_MODEL_COMMAND_BACKEND"
+    REPLY_MODEL_COMMAND_MODEL_SPEC="$REPLY_PROFILE_MODEL"
+    REPLY_MODEL_COMMAND_PROFILE_ARGS=("${REPLY_PROFILE_ARGS[@]+"${REPLY_PROFILE_ARGS[@]}"}")
+  fi
 }
 
 cmd_run_usage() {
@@ -1456,54 +1562,21 @@ cmd_run() {
     [[ $# -eq 0 ]] && return 1 || return 0
   fi
 
-  local BACKEND_FLAG=""
-  if [[ "$1" == "--backend" ]]; then
-    BACKEND_FLAG="${2:-}"
-    shift 2
-    if [[ $# -eq 0 ]]; then
-      cmd_run_usage >&2
-      return 1
-    fi
+  if ! _parse_model_command_args "$@"; then
+    echo "$REPLY_MODEL_COMMAND_ERROR" >&2
+    cmd_run_usage >&2
+    return 1
   fi
 
-  local model_spec="$1"
-  shift
-  local extra_args=()
-  if [[ $# -gt 0 ]]; then
-    if [[ "$1" != "--" ]]; then
-      echo "Unknown argument: $1" >&2
-      cmd_run_usage >&2
-      return 1
-    fi
-    shift
-    extra_args=("$@")
-  fi
+  local BACKEND_FLAG="$REPLY_MODEL_COMMAND_BACKEND_FLAG"
+  local model_spec="$REPLY_MODEL_COMMAND_MODEL_SPEC"
+  local extra_args=("${REPLY_MODEL_COMMAND_EXTRA_ARGS[@]+"${REPLY_MODEL_COMMAND_EXTRA_ARGS[@]}"}")
 
-  # If the spec contains no '/', it cannot be a "USER/MODEL" HuggingFace id.
-  # Treat it as a saved profile name and load its model and flags.
-  local profile_name=""
-  local profile_args=()
-  if [[ "$model_spec" != */* ]]; then
-    profile_name="$model_spec"
-    # First pass: extract the model spec to determine the backend.
-    _load_profile "$profile_name" run
-    model_spec="$REPLY_PROFILE_MODEL"
-  fi
+  _resolve_model_command_context run "$BACKEND_FLAG" "$model_spec"
 
-  # Resolve backend: explicit flag > infer from model spec.
-  local BACKEND
-  if [[ -n "$BACKEND_FLAG" ]]; then
-    BACKEND="$(resolve_backend "$BACKEND_FLAG")"
-  else
-    BACKEND="$(_infer_model_backend "$model_spec")"
-  fi
-
-  # Second pass: reload the profile with backend filtering if applicable.
-  if [[ -n "$profile_name" ]]; then
-    _load_profile "$profile_name" run "$BACKEND"
-    model_spec="$REPLY_PROFILE_MODEL"
-    profile_args=("${REPLY_PROFILE_ARGS[@]+"${REPLY_PROFILE_ARGS[@]}"}")
-  fi
+  local BACKEND="$REPLY_MODEL_COMMAND_BACKEND"
+  model_spec="$REPLY_MODEL_COMMAND_MODEL_SPEC"
+  local profile_args=("${REPLY_MODEL_COMMAND_PROFILE_ARGS[@]+"${REPLY_MODEL_COMMAND_PROFILE_ARGS[@]}"}")
 
   if [[ "$BACKEND" == "mlx" ]]; then
     _run_mlx "$model_spec" "${profile_args[@]+"${profile_args[@]}"}" "${extra_args[@]+"${extra_args[@]}"}"
@@ -1559,54 +1632,21 @@ cmd_serve() {
     [[ $# -eq 0 ]] && return 1 || return 0
   fi
 
-  local BACKEND_FLAG=""
-  if [[ "$1" == "--backend" ]]; then
-    BACKEND_FLAG="${2:-}"
-    shift 2
-    if [[ $# -eq 0 ]]; then
-      cmd_serve_usage >&2
-      return 1
-    fi
+  if ! _parse_model_command_args "$@"; then
+    echo "$REPLY_MODEL_COMMAND_ERROR" >&2
+    cmd_serve_usage >&2
+    return 1
   fi
 
-  local model_spec="$1"
-  shift
-  local extra_args=()
-  if [[ $# -gt 0 ]]; then
-    if [[ "$1" != "--" ]]; then
-      echo "Unknown argument: $1" >&2
-      cmd_serve_usage >&2
-      return 1
-    fi
-    shift
-    extra_args=("$@")
-  fi
+  local BACKEND_FLAG="$REPLY_MODEL_COMMAND_BACKEND_FLAG"
+  local model_spec="$REPLY_MODEL_COMMAND_MODEL_SPEC"
+  local extra_args=("${REPLY_MODEL_COMMAND_EXTRA_ARGS[@]+"${REPLY_MODEL_COMMAND_EXTRA_ARGS[@]}"}")
 
-  # If the spec contains no '/', it cannot be a "USER/MODEL" HuggingFace id.
-  # Treat it as a saved profile name and load its model and flags.
-  local profile_name=""
-  local profile_args=()
-  if [[ "$model_spec" != */* ]]; then
-    profile_name="$model_spec"
-    # First pass: extract the model spec to determine the backend.
-    _load_profile "$profile_name" serve
-    model_spec="$REPLY_PROFILE_MODEL"
-  fi
+  _resolve_model_command_context serve "$BACKEND_FLAG" "$model_spec"
 
-  # Resolve backend: explicit flag > infer from model spec.
-  local BACKEND
-  if [[ -n "$BACKEND_FLAG" ]]; then
-    BACKEND="$(resolve_backend "$BACKEND_FLAG")"
-  else
-    BACKEND="$(_infer_model_backend "$model_spec")"
-  fi
-
-  # Second pass: reload the profile with backend filtering if applicable.
-  if [[ -n "$profile_name" ]]; then
-    _load_profile "$profile_name" serve "$BACKEND"
-    model_spec="$REPLY_PROFILE_MODEL"
-    profile_args=("${REPLY_PROFILE_ARGS[@]+"${REPLY_PROFILE_ARGS[@]}"}")
-  fi
+  local BACKEND="$REPLY_MODEL_COMMAND_BACKEND"
+  model_spec="$REPLY_MODEL_COMMAND_MODEL_SPEC"
+  local profile_args=("${REPLY_MODEL_COMMAND_PROFILE_ARGS[@]+"${REPLY_MODEL_COMMAND_PROFILE_ARGS[@]}"}")
 
   if [[ "$BACKEND" == "mlx" ]]; then
     _serve_mlx "$model_spec" "${profile_args[@]+"${profile_args[@]}"}" "${extra_args[@]+"${extra_args[@]}"}"

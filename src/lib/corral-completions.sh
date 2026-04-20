@@ -1,9 +1,19 @@
 # Shell completion generators for corral.
+#
+# Provides three parallel generators — _completions_fish(), _completions_zsh(),
+# _completions_bash() — each emitting a self-contained heredoc of shell-native
+# completion code. The output is written to the appropriate completions
+# directory by install_completions() in corral-runtime.sh.
+#
+# Each generator defines dynamic completion helpers (__corral_cached_models,
+# __corral_profiles, __corral_templates, etc.) that call 'corral ls --quiet'
+# at completion time to provide live model/profile/template suggestions.
+#
+# Note: the heredoc bodies for fish and bash use \$-escaping because they are
+# interpolated at emit time; zsh uses a quoted delimiter ('ZSHEOF') to avoid
+# all bash expansion.
 # shellcheck shell=bash
 # shellcheck disable=SC2154
-# Each _completions_<shell>() function emits a heredoc of shell-native
-# completion code; the output is written to the appropriate completions
-# directory by install_completions() in corral-runtime.sh.
 
 # Generate Fish shell completions for corral.
 # Fish uses the __fish_seen_subcommand_from helper to scope completions

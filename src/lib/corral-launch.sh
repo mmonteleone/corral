@@ -1,4 +1,23 @@
 # Launch supported third-party coding harnesses against a running corral server.
+#
+# Detects a running corral server process (llama-server or mlx_lm.server),
+# updates the harness's configuration files to point at that server's
+# OpenAI-compatible /v1 endpoint, backs up existing config when it changes,
+# and execs the harness.
+#
+# Supported harnesses: pi, opencode
+#
+# JSON/JSONC handling:
+#   _strip_jsonc()            — awk program that strips // and /* */ comments
+#                               and trailing commas from JSONC input.
+#   _normalize_json_for_merge() — pre-processes existing config for deep merge.
+#   _render_merged_json_file()  — deep-merges a patch into an existing JSON file.
+#
+# Config write safety:
+#   _write_text_file_with_backup() — atomic write with .bak.TIMESTAMP backup.
+#
+# Launch templates live in src/launch-templates/*.tmpl and are inlined by
+# tools/build.sh between BEGIN/END_BUILTIN_LAUNCH_TEMPLATES markers.
 # shellcheck shell=bash
 
 CORRAL_LAUNCH_PROVIDER_ID="corral-launch"
@@ -41,6 +60,12 @@ _ensure_parent_dir() {
   mkdir -p "$(dirname "$path")"
 }
 
+# Write text to a config file, preserving the previous version in a timestamped
+# backup when the on-disk content changes.
+#
+# Sets:
+#   REPLY_FILE_UPDATED -> "1" when the file changed, otherwise "0"
+#   REPLY_FILE_BACKUP  -> backup path when one was created, otherwise empty
 _write_text_file_with_backup() {
   local path="$1"
   local content="$2"
@@ -310,6 +335,13 @@ _launch_tool_supports_process() {
   esac
 }
 
+# Resolve the single running corral server compatible with the requested tool.
+#
+# Sets:
+#   REPLY_LAUNCH_PROCESS  -> process name (llama-server or mlx_lm.server)
+#   REPLY_LAUNCH_PORT     -> server port
+#   REPLY_LAUNCH_MODEL    -> model identifier passed to the server
+#   REPLY_LAUNCH_ENDPOINT -> OpenAI-compatible base URL for the harness config
 _launch_resolve_target() {
   local tool="$1"
   local requested_port="${2:-}"
@@ -417,6 +449,72 @@ Examples:
 EOF
 }
 
+# Parse arguments for cmd_launch.
+#
+# Sets:
+#   REPLY_LAUNCH_REQUESTED_PORT -> optional --port value
+#   REPLY_LAUNCH_TOOL           -> launch target name
+#   REPLY_LAUNCH_EXTRA_ARGS     -> passthrough args after '--'
+#   REPLY_LAUNCH_SHOW_HELP      -> "true" when -h/--help was passed
+#   REPLY_LAUNCH_ERROR          -> explanatory error string on failure
+_parse_launch_args() {
+  REPLY_LAUNCH_REQUESTED_PORT=""
+  REPLY_LAUNCH_TOOL=""
+  REPLY_LAUNCH_EXTRA_ARGS=()
+  REPLY_LAUNCH_SHOW_HELP="false"
+  REPLY_LAUNCH_ERROR=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port)
+        [[ $# -ge 2 && -n "${2:-}" ]] || {
+          REPLY_LAUNCH_ERROR="missing value for --port"
+          return 1
+        }
+        [[ "$2" =~ ^[0-9]+$ ]] || {
+          REPLY_LAUNCH_ERROR="invalid port '${2}'"
+          return 1
+        }
+        REPLY_LAUNCH_REQUESTED_PORT="$2"
+        shift 2
+        ;;
+      --)
+        shift
+        REPLY_LAUNCH_EXTRA_ARGS=("$@")
+        break
+        ;;
+      -h|--help)
+        REPLY_LAUNCH_SHOW_HELP="true"
+        return 0
+        ;;
+      -* )
+        REPLY_LAUNCH_ERROR="Unknown argument: $1"
+        return 1
+        ;;
+      *)
+        if [[ -n "$REPLY_LAUNCH_TOOL" ]]; then
+          REPLY_LAUNCH_ERROR="Unknown argument: $1"
+          return 1
+        fi
+        REPLY_LAUNCH_TOOL="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$REPLY_LAUNCH_TOOL" && "$REPLY_LAUNCH_SHOW_HELP" != "true" ]]; then
+    REPLY_LAUNCH_ERROR="missing launch target"
+    return 1
+  fi
+}
+
+_validate_launch_tool() {
+  case "$1" in
+    pi|opencode) ;;
+    *) die "unsupported launch target '${1}'. Expected one of: pi, opencode" ;;
+  esac
+}
+
 cmd_launch() {
   if [[ $# -eq 0 ]]; then
     cmd_launch_usage
@@ -428,51 +526,22 @@ cmd_launch() {
     return 0
   fi
 
-  local requested_port=""
-  local tool=""
-  local extra_args=()
+  if ! _parse_launch_args "$@"; then
+    echo "$REPLY_LAUNCH_ERROR" >&2
+    cmd_launch_usage >&2
+    return 1
+  fi
 
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --port)
-        requested_port="${2:-}"
-        [[ -n "$requested_port" ]] || die "missing value for --port"
-        [[ "$requested_port" =~ ^[0-9]+$ ]] || die "invalid port '${requested_port}'"
-        shift 2
-        ;;
-      --)
-        shift
-        extra_args=("$@")
-        break
-        ;;
-      -h|--help)
-        cmd_launch_usage
-        return 0
-        ;;
-      -*)
-        echo "Unknown argument: $1" >&2
-        cmd_launch_usage >&2
-        return 1
-        ;;
-      *)
-        if [[ -n "$tool" ]]; then
-          echo "Unknown argument: $1" >&2
-          cmd_launch_usage >&2
-          return 1
-        fi
-        tool="$1"
-        shift
-        ;;
-    esac
-  done
+  if [[ "$REPLY_LAUNCH_SHOW_HELP" == "true" ]]; then
+    cmd_launch_usage
+    return 0
+  fi
 
-  case "$tool" in
-    pi|opencode)
-      ;;
-    *)
-      die "unsupported launch target '${tool}'. Expected one of: pi, opencode"
-      ;;
-  esac
+  local requested_port="$REPLY_LAUNCH_REQUESTED_PORT"
+  local tool="$REPLY_LAUNCH_TOOL"
+  local extra_args=("${REPLY_LAUNCH_EXTRA_ARGS[@]+"${REPLY_LAUNCH_EXTRA_ARGS[@]}"}")
+
+  _validate_launch_tool "$tool"
 
   require_cmds date "$tool"
   CORRAL_LAUNCH_RUN_TIMESTAMP="$(_launch_timestamp)"
