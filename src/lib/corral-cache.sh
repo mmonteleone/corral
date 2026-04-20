@@ -1,4 +1,16 @@
 # Cache and quant helpers for corral.
+#
+# Manages the local HuggingFace hub cache (~/.cache/huggingface/hub). Provides:
+#   - Model spec parsing: _parse_model_spec() splits "user/model:quant"
+#   - Quant extraction: extract_quant_from_filename(), normalize_quant_tag()
+#   - GGUF discovery: _find_cached_gguf_paths(), _find_gguf_by_quant(), etc.
+#   - MLX detection: _cache_dir_has_mlx_weights() — positive match via safetensors/bin/pt
+#   - Cache dir conversion: model_name_to_cache_dir() ↔ cache_dir_to_model_name()
+#   - Entry collection: collect_cached_model_entries() (GGUF), collect_mlx_model_entries()
+#   - In-use guards: model_is_in_use(), mlx_model_is_in_use(), quant_is_in_use()
+#   - Commands: cmd_list (ls), cmd_remove (rm)
+#
+# Entry format: pipe-delimited "name|quant|size|backend" rows consumed by cmd_list.
 # shellcheck shell=bash
 
 # Parse "user/model[:quant]" into globals REPLY_MODEL and REPLY_QUANT.
@@ -196,22 +208,37 @@ cache_dir_to_model_name() {
 
 collect_mlx_model_entries() {
   # MLX model visibility is derived from HF cache only; Corral keeps no
-  # sidecar registry.
+  # sidecar registry. Match runtime backend inference: any cached HF repo
+  # with safetensors/bin/pt model weights is treated as an MLX model.
   if [[ -d "$HF_HUB_DIR" ]]; then
     local dir
     for dir in "$HF_HUB_DIR"/models--*/; do
       [[ -d "$dir" ]] || continue
+      if ! _cache_dir_has_mlx_weights "$dir"; then
+        continue
+      fi
       local model_name
       model_name="$(cache_dir_to_model_name "$dir")"
-      case "$model_name" in
-        mlx-community/*)
-          local size
-          size="$(du -sh "$dir" 2>/dev/null | cut -f1)"
-          printf '%s||%s|mlx\n' "$model_name" "$size"
-          ;;
-      esac
+      local size
+      size="$(du -sh "$dir" 2>/dev/null | cut -f1)"
+      printf '%s||%s|mlx\n' "$model_name" "$size"
     done
   fi
+}
+
+# Return success if a model cache directory contains MLX-compatible model
+# weights (safetensors, .bin, or .pt). This positively identifies MLX models
+# rather than inferring from absence of GGUF files.
+_cache_dir_has_mlx_weights() {
+  local cache_dir="$1"
+  local snapshot_dir
+  for snapshot_dir in "$cache_dir"/snapshots/*/; do
+    [[ -d "$snapshot_dir" ]] || continue
+    if find "$snapshot_dir" \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) -print -quit 2>/dev/null | grep -q .; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 # Return success if a model cache directory contains at least one GGUF file.
@@ -413,52 +440,99 @@ Options:
 EOF
 }
 
-cmd_list() {
-  local BACKEND_FLAG=""
-  local QUIET="false"
-  local SHOW_MODELS="true"
-  local SHOW_PROFILES="true"
-  local SHOW_TEMPLATES="true"
-  local SCOPE_SET="false"
+_enable_list_scope() {
+  local scope="$1"
+
+  if [[ "$REPLY_LIST_SCOPE_SET" == "false" ]]; then
+    REPLY_LIST_SHOW_MODELS="false"
+    REPLY_LIST_SHOW_PROFILES="false"
+    REPLY_LIST_SHOW_TEMPLATES="false"
+    REPLY_LIST_SCOPE_SET="true"
+  fi
+
+  case "$scope" in
+    models) REPLY_LIST_SHOW_MODELS="true" ;;
+    profiles) REPLY_LIST_SHOW_PROFILES="true" ;;
+    templates) REPLY_LIST_SHOW_TEMPLATES="true" ;;
+  esac
+}
+
+# Parse arguments for cmd_list.
+#
+# Sets:
+#   REPLY_LIST_BACKEND_FLAG  -> raw --backend value, or empty
+#   REPLY_LIST_QUIET         -> "true" when --quiet was passed
+#   REPLY_LIST_SHOW_MODELS   -> scope flag
+#   REPLY_LIST_SHOW_PROFILES -> scope flag
+#   REPLY_LIST_SHOW_TEMPLATES -> scope flag
+#   REPLY_LIST_SHOW_HELP     -> "true" when -h/--help was passed
+#   REPLY_LIST_ERROR         -> explanatory error string on failure
+_parse_list_args() {
+  REPLY_LIST_BACKEND_FLAG=""
+  REPLY_LIST_QUIET="false"
+  REPLY_LIST_SHOW_MODELS="true"
+  REPLY_LIST_SHOW_PROFILES="true"
+  REPLY_LIST_SHOW_TEMPLATES="true"
+  REPLY_LIST_SCOPE_SET="false"
+  REPLY_LIST_SHOW_HELP="false"
+  REPLY_LIST_ERROR=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --backend) BACKEND_FLAG="${2:-}"; shift 2 ;;
-      --quiet)   QUIET="true"; shift ;;
+      --backend)
+        [[ $# -ge 2 && -n "${2:-}" ]] || {
+          REPLY_LIST_ERROR="missing value for --backend"
+          return 1
+        }
+        REPLY_LIST_BACKEND_FLAG="$2"
+        _validate_backend_flag "$REPLY_LIST_BACKEND_FLAG"
+        shift 2
+        ;;
+      --quiet)
+        REPLY_LIST_QUIET="true"
+        shift
+        ;;
       --models)
-        if [[ "$SCOPE_SET" == "false" ]]; then
-          SHOW_MODELS="false"
-          SHOW_PROFILES="false"
-          SHOW_TEMPLATES="false"
-          SCOPE_SET="true"
-        fi
-        SHOW_MODELS="true"
+        _enable_list_scope models
         shift
         ;;
       --profiles)
-        if [[ "$SCOPE_SET" == "false" ]]; then
-          SHOW_MODELS="false"
-          SHOW_PROFILES="false"
-          SHOW_TEMPLATES="false"
-          SCOPE_SET="true"
-        fi
-        SHOW_PROFILES="true"
+        _enable_list_scope profiles
         shift
         ;;
       --templates)
-        if [[ "$SCOPE_SET" == "false" ]]; then
-          SHOW_MODELS="false"
-          SHOW_PROFILES="false"
-          SHOW_TEMPLATES="false"
-          SCOPE_SET="true"
-        fi
-        SHOW_TEMPLATES="true"
+        _enable_list_scope templates
         shift
         ;;
-      -h|--help) cmd_list_usage; return 0 ;;
-      *)         echo "Unknown argument: $1" >&2; cmd_list_usage >&2; return 1 ;;
+      -h|--help)
+        REPLY_LIST_SHOW_HELP="true"
+        return 0
+        ;;
+      *)
+        REPLY_LIST_ERROR="Unknown argument: $1"
+        return 1
+        ;;
     esac
   done
+}
+
+cmd_list() {
+  if ! _parse_list_args "$@"; then
+    echo "$REPLY_LIST_ERROR" >&2
+    cmd_list_usage >&2
+    return 1
+  fi
+
+  if [[ "$REPLY_LIST_SHOW_HELP" == "true" ]]; then
+    cmd_list_usage
+    return 0
+  fi
+
+  local BACKEND_FLAG="$REPLY_LIST_BACKEND_FLAG"
+  local QUIET="$REPLY_LIST_QUIET"
+  local SHOW_MODELS="$REPLY_LIST_SHOW_MODELS"
+  local SHOW_PROFILES="$REPLY_LIST_SHOW_PROFILES"
+  local SHOW_TEMPLATES="$REPLY_LIST_SHOW_TEMPLATES"
 
   local BACKEND="all"
   if [[ -n "$BACKEND_FLAG" ]]; then
@@ -640,47 +714,61 @@ Options:
 EOF
 }
 
-cmd_remove() {
-  # Idiomatic help/no-args guard used throughout corral:
-  # With no args: print usage to stderr and return 1 (error).
-  # With -h/--help: print usage to stdout and return 0 (success).
-  if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
-    cmd_remove_usage
-    [[ $# -eq 0 ]] && return 1 || return 0
-  fi
-
-  local BACKEND_FLAG=""
-  local target_spec=""
-  local force="false"
+# Parse arguments for cmd_remove after the command-level help/no-args guard.
+#
+# Sets:
+#   REPLY_REMOVE_BACKEND_FLAG -> raw --backend value, or empty
+#   REPLY_REMOVE_TARGET_SPEC  -> model/profile target
+#   REPLY_REMOVE_FORCE        -> "true" when --force was passed
+#   REPLY_REMOVE_SHOW_HELP    -> "true" when -h/--help was passed
+#   REPLY_REMOVE_ERROR        -> explanatory error string on failure
+_parse_remove_args() {
+  REPLY_REMOVE_BACKEND_FLAG=""
+  REPLY_REMOVE_TARGET_SPEC=""
+  REPLY_REMOVE_FORCE="false"
+  REPLY_REMOVE_SHOW_HELP="false"
+  REPLY_REMOVE_ERROR=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --backend)
-        BACKEND_FLAG="${2:-}"
+        [[ $# -ge 2 && -n "${2:-}" ]] || {
+          REPLY_REMOVE_ERROR="missing value for --backend"
+          return 1
+        }
+        REPLY_REMOVE_BACKEND_FLAG="$2"
+        _validate_backend_flag "$REPLY_REMOVE_BACKEND_FLAG"
         shift 2
         ;;
-      --force)   force="true"; shift ;;
-      -h|--help) cmd_remove_usage; return 0 ;;
+      --force)
+        REPLY_REMOVE_FORCE="true"
+        shift
+        ;;
+      -h|--help)
+        REPLY_REMOVE_SHOW_HELP="true"
+        return 0
+        ;;
       *)
-        if [[ -z "$target_spec" ]]; then
-          target_spec="$1"
+        if [[ -z "$REPLY_REMOVE_TARGET_SPEC" ]]; then
+          REPLY_REMOVE_TARGET_SPEC="$1"
           shift
         else
-          echo "Unknown argument: $1" >&2
-          cmd_remove_usage >&2
+          REPLY_REMOVE_ERROR="Unknown argument: $1"
           return 1
         fi
         ;;
     esac
   done
 
-  if [[ -z "$target_spec" ]]; then
-    cmd_remove_usage >&2
+  if [[ -z "$REPLY_REMOVE_TARGET_SPEC" && "$REPLY_REMOVE_SHOW_HELP" != "true" ]]; then
+    REPLY_REMOVE_ERROR="missing model or profile target"
     return 1
   fi
+}
 
-  # If TARGET has no model slash/quant suffix and matches an existing profile,
-  # treat this as profile deletion for parity with model removal.
+_remove_existing_profile_target() {
+  local target_spec="$1"
+
   if [[ "$target_spec" != */* && "$target_spec" != *:* ]]; then
     local profile_path
     profile_path="$(_profile_path "$target_spec")"
@@ -690,13 +778,12 @@ cmd_remove() {
     fi
   fi
 
-  local BACKEND
-  BACKEND="$(resolve_backend "$BACKEND_FLAG")"
+  return 1
+}
 
-  if [[ "$BACKEND" == "mlx" ]]; then
-    _remove_mlx_target "$target_spec" "$force"
-    return 0
-  fi
+_remove_llama_target() {
+  local target_spec="$1"
+  local force="$2"
 
   local model_name quant
   _parse_model_spec "$target_spec"
@@ -732,40 +819,82 @@ cmd_remove() {
       rm -rf "$cache_dir"
     fi
     echo "Done."
-  else
-    # ── Remove the entire model (all quants) ──
-    if model_is_in_use "$cache_dir"; then
-      die "cannot remove '${model_name}': it is currently in use by llama-cli or llama-server."
-    fi
-
-    local all_quants quant_list=()
-    all_quants="$(_find_cached_gguf_files "$cache_dir")"
-    if [[ -n "$all_quants" ]]; then
-      while IFS= read -r fname; do
-        [[ -z "$fname" ]] && continue
-        local tag
-        tag="$(extract_quant_from_filename "$fname")"
-        quant_list+=("$tag")
-      done < <(printf '%s\n' "$all_quants" | sort -u)
-    fi
-
-    echo "The following quant variants will be removed:"
-    if [[ ${#quant_list[@]} -gt 0 ]]; then
-      local q
-      for q in "${quant_list[@]}"; do
-        printf '  %s:%s\n' "$model_name" "$q"
-      done
-    else
-      printf '  %s  (no GGUF variants found)\n' "$model_name"
-    fi
-    echo
-
-    confirm_destructive_action "removing cached model '${model_name}'" "$force" || return 1
-
-    echo "Removing model: $model_name"
-    rm -rf "$cache_dir"
-    echo "Done."
+    return 0
   fi
+
+  # ── Remove the entire model (all quants) ──
+  if model_is_in_use "$cache_dir"; then
+    die "cannot remove '${model_name}': it is currently in use by llama-cli or llama-server."
+  fi
+
+  local all_quants quant_list=()
+  all_quants="$(_find_cached_gguf_files "$cache_dir")"
+  if [[ -n "$all_quants" ]]; then
+    while IFS= read -r fname; do
+      [[ -z "$fname" ]] && continue
+      local tag
+      tag="$(extract_quant_from_filename "$fname")"
+      quant_list+=("$tag")
+    done < <(printf '%s\n' "$all_quants" | sort -u)
+  fi
+
+  echo "The following quant variants will be removed:"
+  if [[ ${#quant_list[@]} -gt 0 ]]; then
+    local q
+    for q in "${quant_list[@]}"; do
+      printf '  %s:%s\n' "$model_name" "$q"
+    done
+  else
+    printf '  %s  (no GGUF variants found)\n' "$model_name"
+  fi
+  echo
+
+  confirm_destructive_action "removing cached model '${model_name}'" "$force" || return 1
+
+  echo "Removing model: $model_name"
+  rm -rf "$cache_dir"
+  echo "Done."
+}
+
+cmd_remove() {
+  # Idiomatic help/no-args guard used throughout corral:
+  # With no args: print usage to stderr and return 1 (error).
+  # With -h/--help: print usage to stdout and return 0 (success).
+  if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
+    cmd_remove_usage
+    [[ $# -eq 0 ]] && return 1 || return 0
+  fi
+
+  if ! _parse_remove_args "$@"; then
+    echo "$REPLY_REMOVE_ERROR" >&2
+    cmd_remove_usage >&2
+    return 1
+  fi
+
+  if [[ "$REPLY_REMOVE_SHOW_HELP" == "true" ]]; then
+    cmd_remove_usage
+    return 0
+  fi
+
+  local BACKEND_FLAG="$REPLY_REMOVE_BACKEND_FLAG"
+  local target_spec="$REPLY_REMOVE_TARGET_SPEC"
+  local force="$REPLY_REMOVE_FORCE"
+
+  # If TARGET has no model slash/quant suffix and matches an existing profile,
+  # treat this as profile deletion for parity with model removal.
+  if _remove_existing_profile_target "$target_spec"; then
+    return 0
+  fi
+
+  local BACKEND
+  BACKEND="$(resolve_backend "$BACKEND_FLAG")"
+
+  if [[ "$BACKEND" == "mlx" ]]; then
+    _remove_mlx_target "$target_spec" "$force"
+    return 0
+  fi
+
+  _remove_llama_target "$target_spec" "$force"
 }
 
 _remove_mlx_target() {

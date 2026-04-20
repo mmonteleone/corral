@@ -1,5 +1,25 @@
 # Shared utility helpers for corral.
+#
+# Foundation module sourced by all other corral modules. Provides:
+#   - Error handling: die(), confirm_action(), confirm_destructive_action()
+#   - Shell profile permission management: shell_profile_edits_allowed()
+#   - Prerequisite checking: require_cmds()
+#   - Path normalization: _normalize_dir_path(), ensure_llama_in_path()
+#   - ANSI colour helpers: _wrap_color(), _stream_supports_color(), etc.
+#   - Tabular output: _print_tsv_table() — TSV-to-padded-columns formatter
+#   - Backend resolution: resolve_backend(), _validate_backend_flag(),
+#     _platform_default_backend(), require_mlx_platform(), _is_mlx_platform()
 # shellcheck shell=bash
+
+# REPLY_* output convention:
+#   Several modules return structured data by setting REPLY_* globals instead
+#   of printing multiple lines or forcing callers through subshell parsing.
+#   Common examples include:
+#     _parse_model_spec()             -> REPLY_MODEL, REPLY_QUANT
+#     _load_profile()                 -> REPLY_PROFILE_MODEL, REPLY_PROFILE_ARGS
+#     _parse_model_command_args()     -> REPLY_MODEL_COMMAND_*
+#     _launch_resolve_target()        -> REPLY_LAUNCH_*
+#   Check each helper's doc comment before consuming its REPLY_* outputs.
 
 # Print an error message to stderr and exit non-zero.
 die() { echo "Error: $*" >&2; exit 1; }
@@ -96,6 +116,18 @@ require_cmds() {
       esac
     }
   done
+}
+
+# Expand a leading '~' and strip a trailing slash from a directory path.
+# Returns the normalized path on stdout.
+# Special case: preserve '/' instead of trimming it to an empty string.
+_normalize_dir_path() {
+  local dir="$1"
+  dir="${dir/#\~/$HOME}"
+  if [[ "$dir" != "/" ]]; then
+    dir="${dir%/}"
+  fi
+  printf '%s' "$dir"
 }
 
 ANSI_COLOR_RESET=$'\033[0m'
@@ -247,10 +279,7 @@ _print_tsv_table() {
 # or values that come from other variables.
 ensure_llama_in_path() {
   local install_root="${CORRAL_INSTALL_ROOT:-$DEFAULT_INSTALL_ROOT}"
-  # ${x/#\~/$HOME}: bash string substitution anchored to the start (#).
-  # Replaces a literal '~' at position 0 with the real HOME path; necessary
-  # because tilde expansion only happens at parse time, not in variable values.
-  install_root="${install_root/#\~/$HOME}"
+  install_root="$(_normalize_dir_path "$install_root")"
   local current_link="${install_root}/current"
   # ":$PATH:" sandwich: wrapping PATH in colons lets the glob *":dir:"*
   # match the dir at the beginning, middle, or end without special-casing.
@@ -288,6 +317,21 @@ resolve_backend() {
     mlx|llama.cpp) printf '%s' "$backend" ;;
     *) die "unknown backend '${backend}': must be 'mlx' or 'llama.cpp'" ;;
   esac
+}
+
+# Validate a raw --backend flag value without resolving a default.
+# Dies with a usage error if the value is non-empty and not one of the
+# recognised backends (mlx, llama.cpp). No-ops on empty values (meaning
+# "no --backend was passed"). Used by cmd_install/update/uninstall/versions
+# where the flag is checked before any resolution or dispatch.
+_validate_backend_flag() {
+  local flag_value="${1:-}"
+  if [[ -n "$flag_value" ]]; then
+    case "$flag_value" in
+      mlx|llama.cpp) ;;
+      *) die "unknown backend '${flag_value}': must be 'mlx' or 'llama.cpp'" ;;
+    esac
+  fi
 }
 
 # Exit with a helpful message if the current platform does not support MLX.

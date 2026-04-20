@@ -1,4 +1,12 @@
 # Search and browse helpers for corral.
+#
+# HuggingFace model search and browser integration. Provides:
+#   - cmd_search() — queries the HF /api/models endpoint with backend-scoped
+#     filters (gguf or mlx), pagination, and multiple sort orders.
+#   - cmd_browse() — opens or prints a HuggingFace model page URL.
+#
+# GGUF quant introspection is handled by the jq asset in src/jq/search-quants.jq,
+# surfaced through _search_quants_jq_defs().
 # shellcheck shell=bash
 
 cmd_search_usage() {
@@ -25,45 +33,196 @@ Options:
 EOF
 }
 
-# Inline jq helper function definitions reused across all jq invocations in cmd_search.
-#
-#   quant_rank    assign a numeric sort weight so higher-precision types sort first:
-#                   F32 → -32, F16/BF16 → -16, QN → -N, unknown → 0.
-#   quants        extract all unique quant tags from a model's .siblings[] filenames
-#                 using the same separator + pattern logic as extract_quant_from_filename.
-#   default_quant select the 'best default' GGUF: prefer Q4_K_M, then Q4_0,
-#                 then the lexicographically first GGUF found.
-# shellcheck disable=SC2016  # $ signs are jq regex anchors, not bash variables
-_jq_quants_def='def quant_rank: if test("^F32$") then -32 elif test("^(BF16|F16)$") then -16 elif test("^(?:[A-Z]{2}[-_])?I?Q[0-9]+") then (capture("^(?:[A-Z]{2}[-_])?I?Q(?<n>[0-9]+)") | .n | tonumber | -.) else 0 end; def gguf_files: [.siblings[]? | .rfilename | select(type == "string" and test("[.]gguf$"; "i"))]; def has_gguf_tag: (((.tags // []) | map(ascii_downcase) | index("gguf")) != null); def has_gguf: ((gguf_files | length > 0) or ((.library_name // "" | ascii_downcase) == "gguf") or has_gguf_tag); def quants: [gguf_files[] | split("/") | last | gsub("[.]gguf$"; "") | gsub("-[0-9]+-of-[0-9]+$"; "") | (capture("[-._](?<q>(?:[A-Z]{2}[-_])?(?:I?Q[0-9]+(?:_[A-Z0-9]+)*|F16|BF16|F32))$")? | .q) | select(type == "string")] | unique | sort_by(quant_rank); def default_quant: gguf_files as $files | ((([$files[] | select(test("Q4_K_M[.-]"; "i"))] | sort | .[0]) // ([$files[] | select(test("Q4_0[.-]"; "i"))] | sort | .[0]) // ($files | sort | .[0])) as $f | if $f != null then (($f | split("/") | last | gsub("[.]gguf$"; "") | gsub("-[0-9]+-of-[0-9]+$"; "")) as $stem | (($stem | capture("[-._](?<q>(?:[A-Z]{2}[-_])?(?:I?Q[0-9]+(?:_[A-Z0-9]+)*|F16|BF16|F32))$")? | .q) // $stem)) else null end);'
+# Print the jq helper definitions used by llama.cpp/GGUF search rendering.
+# In source mode this reads src/jq/search-quants.jq from disk; tools/build.sh
+# replaces the marked block with an inlined heredoc in standalone builds.
+_search_quants_jq_defs() {
+# BEGIN_SEARCH_QUANTS_JQ
+  local jq_path
+  jq_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../jq/search-quants.jq"
+  cat "$jq_path"
+# END_SEARCH_QUANTS_JQ
+}
 
-cmd_search() {
-  local BACKEND_FLAG=""
-  local query=""
-  local sort_by="trending"
-  local limit=20
-  local quants="false"
-  local quiet="false"
+# Parse arguments for cmd_search.
+#
+# Sets:
+#   REPLY_SEARCH_BACKEND_FLAG -> raw --backend value, or empty
+#   REPLY_SEARCH_QUERY        -> optional positional query string
+#   REPLY_SEARCH_SORT         -> sort choice
+#   REPLY_SEARCH_LIMIT        -> raw --limit value
+#   REPLY_SEARCH_QUANTS       -> "true" when --quants was passed
+#   REPLY_SEARCH_QUIET        -> "true" when --quiet was passed
+#   REPLY_SEARCH_SHOW_HELP    -> "true" when -h/--help was passed
+#   REPLY_SEARCH_ERROR        -> explanatory error string on failure
+_parse_search_args() {
+  REPLY_SEARCH_BACKEND_FLAG=""
+  REPLY_SEARCH_QUERY=""
+  REPLY_SEARCH_SORT="trending"
+  REPLY_SEARCH_LIMIT="20"
+  REPLY_SEARCH_QUANTS="false"
+  REPLY_SEARCH_QUIET="false"
+  REPLY_SEARCH_SHOW_HELP="false"
+  REPLY_SEARCH_ERROR=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --backend) BACKEND_FLAG="${2:-}"; shift 2 ;;
-      --sort)    sort_by="${2:-}"; shift 2 ;;
-      --limit)   limit="${2:-}"; shift 2 ;;
-      --quants)  quants="true"; shift ;;
-      --quiet)   quiet="true"; shift ;;
-      -h|--help) cmd_search_usage; return 0 ;;
+      --backend)
+        [[ $# -ge 2 && -n "${2:-}" ]] || {
+          REPLY_SEARCH_ERROR="missing value for --backend"
+          return 1
+        }
+        REPLY_SEARCH_BACKEND_FLAG="$2"
+        _validate_backend_flag "$REPLY_SEARCH_BACKEND_FLAG"
+        shift 2
+        ;;
+      --sort)
+        [[ $# -ge 2 && -n "${2:-}" ]] || {
+          REPLY_SEARCH_ERROR="missing value for --sort"
+          return 1
+        }
+        REPLY_SEARCH_SORT="$2"
+        shift 2
+        ;;
+      --limit)
+        [[ $# -ge 2 && -n "${2:-}" ]] || {
+          REPLY_SEARCH_ERROR="missing value for --limit"
+          return 1
+        }
+        REPLY_SEARCH_LIMIT="$2"
+        shift 2
+        ;;
+      --quants)
+        REPLY_SEARCH_QUANTS="true"
+        shift
+        ;;
+      --quiet)
+        REPLY_SEARCH_QUIET="true"
+        shift
+        ;;
+      -h|--help)
+        REPLY_SEARCH_SHOW_HELP="true"
+        return 0
+        ;;
       *)
-        if [[ -z "$query" ]]; then
-          query="$1"
+        if [[ -z "$REPLY_SEARCH_QUERY" ]]; then
+          REPLY_SEARCH_QUERY="$1"
           shift
         else
-          echo "Unknown argument: $1" >&2
-          cmd_search_usage >&2
+          REPLY_SEARCH_ERROR="Unknown argument: $1"
           return 1
         fi
         ;;
     esac
   done
+}
+
+_search_api_sort() {
+  case "$1" in
+    trending) printf 'trendingScore' ;;
+    downloads) printf 'downloads' ;;
+    newest) printf 'lastModified' ;;
+    *) die "unknown sort value '${1}': must be trending, downloads, or newest" ;;
+  esac
+}
+
+_build_search_api_url() {
+  local backend="$1"
+  local api_sort="$2"
+  local limit="$3"
+  local query="${4:-}"
+  local base_url="https://huggingface.co/api/models?sort=${api_sort}&direction=-1&full=true"
+
+  if [[ -n "$query" ]]; then
+    # URL-encode the query string using jq's built-in @uri formatter, avoiding
+    # a dependency on python, perl, or other external URL-encoding utilities.
+    local encoded_query
+    encoded_query="$(printf '%s' "$query" | jq -Rr @uri)"
+    base_url+="&search=${encoded_query}"
+  fi
+
+  case "$backend" in
+    llama.cpp) base_url+="&filter=gguf" ;;
+    mlx) base_url+="&filter=mlx" ;;
+  esac
+
+  base_url+="&limit=${limit}"
+  printf '%s' "$base_url"
+}
+
+_emit_mlx_search_results() {
+  local results="$1"
+  local quiet="$2"
+
+  if [[ "$quiet" == "true" ]]; then
+    printf '%s' "$results" | jq -r '.[] | .modelId'
+  else
+    printf '%s' "$results" \
+      | jq -r '.[] | [.modelId, "mlx", (.downloads // 0 | tostring)] | @tsv' \
+      | _print_tsv_table 'llr' $'MODEL\tBACKEND\tDOWNLOADS'
+  fi
+}
+
+_emit_llama_search_results() {
+  local results="$1"
+  local quiet="$2"
+  local quants="$3"
+  local jq_quants_defs=""
+
+  if [[ "$quants" == "true" ]]; then
+    jq_quants_defs="$(_search_quants_jq_defs)"
+  fi
+
+  if [[ "$quiet" == "true" ]]; then
+    if [[ "$quants" == "true" ]]; then
+      printf '%s' "$results" | jq -r "${jq_quants_defs}"'
+        .[] | .modelId as $m | (quants | if length > 0 then .[] | ($m + ":" + .) else $m end)'
+    else
+      printf '%s' "$results" | jq -r '.[] | .modelId'
+    fi
+    return 0
+  fi
+
+  if [[ "$quants" == "true" ]]; then
+    # @tsv: jq formatter that joins array elements with tab characters.
+    # Paired with IFS=$'\t' in the read loop below, this provides reliable
+    # field splitting even when values contain spaces.
+    printf '%s' "$results" \
+      | jq -r "${jq_quants_defs}"'
+          .[] |
+          .modelId as $model |
+          [
+            [$model, "llama.cpp", (.downloads // 0 | tostring)],
+            (quants[]? | ["  " + $model + ":" + ., "", ""])
+          ]
+          | .[]
+          | @tsv' \
+      | _print_tsv_table 'llr' $'MODEL\tBACKEND\tDOWNLOADS'
+  else
+    printf '%s' "$results" \
+      | jq -r '.[] | [.modelId, "llama.cpp", (.downloads // 0 | tostring)] | @tsv' \
+      | _print_tsv_table 'llr' $'MODEL\tBACKEND\tDOWNLOADS'
+  fi
+}
+
+cmd_search() {
+  if ! _parse_search_args "$@"; then
+    echo "$REPLY_SEARCH_ERROR" >&2
+    cmd_search_usage >&2
+    return 1
+  fi
+
+  if [[ "$REPLY_SEARCH_SHOW_HELP" == "true" ]]; then
+    cmd_search_usage
+    return 0
+  fi
+
+  local BACKEND_FLAG="$REPLY_SEARCH_BACKEND_FLAG"
+  local query="$REPLY_SEARCH_QUERY"
+  local sort_by="$REPLY_SEARCH_SORT"
+  local limit="$REPLY_SEARCH_LIMIT"
+  local quants="$REPLY_SEARCH_QUANTS"
+  local quiet="$REPLY_SEARCH_QUIET"
 
   # Search always uses a single backend-specific server-side filter.
   local BACKEND=""
@@ -82,12 +241,7 @@ cmd_search() {
   (( limit > 0 )) || die "invalid --limit value '${limit}': must be greater than zero"
 
   local api_sort
-  case "$sort_by" in
-    trending)  api_sort="trendingScore" ;;
-    downloads) api_sort="downloads" ;;
-    newest)    api_sort="lastModified" ;;
-    *)         die "unknown sort value '${sort_by}': must be trending, downloads, or newest" ;;
-  esac
+  api_sort="$(_search_api_sort "$sort_by")"
 
   require_cmds curl jq
 
@@ -95,21 +249,8 @@ cmd_search() {
   local auth_header=()
   [[ -n "$hf_token" ]] && auth_header=(-H "Authorization: Bearer ${hf_token}")
 
-  local base_url="https://huggingface.co/api/models?sort=${api_sort}&direction=-1&full=true"
-  if [[ -n "$query" ]]; then
-    # URL-encode the query string using jq's built-in @uri formatter, avoiding
-    # a dependency on python, perl, or other external URL-encoding utilities.
-    local encoded_query
-    encoded_query="$(printf '%s' "$query" | jq -Rr @uri)"
-    base_url+="&search=${encoded_query}"
-  fi
-  if [[ "$BACKEND" == "llama.cpp" ]]; then
-    base_url+="&filter=gguf"
-  elif [[ "$BACKEND" == "mlx" ]]; then
-    base_url+="&filter=mlx"
-  fi
-
-  base_url+="&limit=${limit}"
+  local base_url
+  base_url="$(_build_search_api_url "$BACKEND" "$api_sort" "$limit" "$query")"
 
   # ${auth_header[@]+"${auth_header[@]}"}: safely expand an array that might
   # be empty under 'set -u'. If auth_header has no elements, this expands to
@@ -137,45 +278,11 @@ cmd_search() {
   fi
 
   if [[ "$BACKEND" == "mlx" ]]; then
-    if [[ "$quiet" == "true" ]]; then
-      printf '%s' "$results" | jq -r '.[] | .modelId'
-    else
-      printf '%s' "$results" \
-        | jq -r '.[] | [.modelId, "mlx", (.downloads // 0 | tostring)] | @tsv' \
-        | _print_tsv_table 'llr' $'MODEL\tBACKEND\tDOWNLOADS'
-    fi
+    _emit_mlx_search_results "$results" "$quiet"
     return 0
   fi
 
-  if [[ "$quiet" == "true" ]]; then
-    if [[ "$quants" == "true" ]]; then
-      printf '%s' "$results" | jq -r "${_jq_quants_def}"'
-        .[] | .modelId as $m | (quants | if length > 0 then .[] | ($m + ":" + .) else $m end)'
-    else
-      printf '%s' "$results" | jq -r '.[] | .modelId'
-    fi
-  else
-    if [[ "$quants" == "true" ]]; then
-      # @tsv: jq formatter that joins array elements with tab characters.
-      # Paired with IFS=$'\t' in the read loop below, this provides reliable
-      # field splitting even when values contain spaces.
-      printf '%s' "$results" \
-        | jq -r "${_jq_quants_def}"'
-            .[] |
-            .modelId as $model |
-            [
-              [$model, "llama.cpp", (.downloads // 0 | tostring)],
-              (quants[]? | ["  " + $model + ":" + ., "", ""])
-            ]
-            | .[]
-            | @tsv' \
-        | _print_tsv_table 'llr' $'MODEL\tBACKEND\tDOWNLOADS'
-    else
-      printf '%s' "$results" \
-        | jq -r '.[] | [.modelId, "llama.cpp", (.downloads // 0 | tostring)] | @tsv' \
-        | _print_tsv_table 'llr' $'MODEL\tBACKEND\tDOWNLOADS'
-    fi
-  fi
+  _emit_llama_search_results "$results" "$quiet" "$quants"
 }
 
 cmd_browse_usage() {

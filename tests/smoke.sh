@@ -421,11 +421,23 @@ test_generated_standalone_script() {
     return
   fi
 
+  # shellcheck disable=SC2016  # single-quoted grep pattern is intentional literal
+  if grep -q 'jq_path="$(cd "$(dirname "${BASH_SOURCE\[0\]}")" && pwd)/../jq/search-quants.jq"' "$generated_script"; then
+    fail 'generated standalone script inlines search jq asset' 'expected standalone script to inline search-quants.jq instead of reading src/jq at runtime'
+    return
+  fi
+
+  if ! grep -q 'def quant_rank:' "$generated_script"; then
+    fail 'generated standalone script inlines search jq asset' 'expected standalone script to include embedded jq quant helpers'
+    return
+  fi
+
   run_cmd "$stdout_file" "$stderr_file" bash "$generated_script" help
   if [[ $RUN_STATUS -eq 0 ]] && assert_contains "$(cat "$stdout_file")" 'Commands:'; then
     pass 'generated standalone script builds'
     pass 'generated standalone script is self-contained'
     pass 'generated standalone script inlines launch templates'
+    pass 'generated standalone script inlines search jq asset'
   else
     fail 'generated standalone script is self-contained' "expected generated script to run standalone help successfully: $(cat "$stderr_file")"
   fi
@@ -2275,8 +2287,8 @@ test_mlx_list_discovers_cache() {
   local model_name='mlx-community/gemma-4-26b-a4b-it-4bit'
 
   local mlx_cache_dir="${HOME}/.cache/huggingface/hub/models--mlx-community--gemma-4-26b-a4b-it-4bit"
-  mkdir -p "$mlx_cache_dir"
-  : >"${mlx_cache_dir}/model.safetensors"
+  mkdir -p "${mlx_cache_dir}/snapshots/abc123"
+  : >"${mlx_cache_dir}/snapshots/abc123/model.safetensors"
 
   run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --backend mlx --quiet --models
   if [[ $RUN_STATUS -ne 0 ]]; then
@@ -2292,6 +2304,29 @@ test_mlx_list_discovers_cache() {
   pass 'mlx list discovers cache'
 }
 
+test_mlx_list_discovers_safetensors_cache() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+  local model_name='unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit'
+
+  local mlx_cache_dir="${HOME}/.cache/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-UD-MLX-4bit"
+  mkdir -p "${mlx_cache_dir}/snapshots/abc123"
+  : >"${mlx_cache_dir}/snapshots/abc123/model.safetensors"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --backend mlx --quiet --models
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'mlx list discovers safetensors cache' "list failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  if ! assert_contains "$(cat "$stdout_file")" "$model_name"; then
+    fail 'mlx list discovers safetensors cache' "expected cache-discovered mlx model, got: $(cat "$stdout_file")"
+    return
+  fi
+
+  pass 'mlx list discovers safetensors cache'
+}
+
 test_list_default_includes_both_backends() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
@@ -2299,8 +2334,8 @@ test_list_default_includes_both_backends() {
   create_gguf_fixture "models--unsloth--Qwen3.5-35B-A3B-GGUF" "model-Q4_K_M.gguf" 1024
 
   local mlx_cache_dir="${HOME}/.cache/huggingface/hub/models--mlx-community--gemma-4-26b-a4b-it-4bit"
-  mkdir -p "$mlx_cache_dir"
-  : >"${mlx_cache_dir}/model.safetensors"
+  mkdir -p "${mlx_cache_dir}/snapshots/abc123"
+  : >"${mlx_cache_dir}/snapshots/abc123/model.safetensors"
 
   run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --quiet --models
   if [[ $RUN_STATUS -ne 0 ]]; then
@@ -4867,6 +4902,9 @@ main() {
 
   setup_test_env
   test_mlx_list_discovers_cache
+
+  setup_test_env
+  test_mlx_list_discovers_safetensors_cache
 
   setup_test_env
   test_list_default_includes_both_backends

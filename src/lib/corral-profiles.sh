@@ -1,4 +1,16 @@
 # Profile and template helpers for corral.
+#
+# Manages named run/serve profiles and templates stored on disk. Provides:
+#   - Directory resolution: _profiles_dir(), _templates_dir() (env-overridable)
+#   - Name validation: _validate_name() → _validate_profile_name(), _validate_template_name()
+#   - Template lookup: _get_template_content() (user-defined overrides built-in)
+#   - Profile I/O: _load_profile() with INI-like section filtering by command and backend
+#   - Section matching: _section_matches() — [run], [serve], [mlx], [llama.cpp], [mlx.run], etc.
+#   - Entry collection: collect_profile_entries(), collect_template_entries()
+#   - Commands: cmd_profile (set/show/duplicate), cmd_template (show/set/remove)
+#
+# Built-in templates are inlined by tools/build.sh between BEGIN/END markers;
+# in dev mode, they are read from src/templates/*.conf.
 # shellcheck shell=bash
 
 # Return the resolved profiles directory (env override or default).
@@ -6,9 +18,7 @@
 # otherwise fall back to the default. This pattern is used for all overridable dirs.
 _profiles_dir() {
   local dir="${CORRAL_PROFILES_DIR:-$DEFAULT_PROFILES_DIR}"
-  # ${dir/#\~/$HOME}: expand leading tilde (see ensure_llama_in_path).
-  dir="${dir/#\~/$HOME}"
-  printf '%s' "$dir"
+  printf '%s' "$(_normalize_dir_path "$dir")"
 }
 
 # Return the path for a named profile file.
@@ -20,8 +30,7 @@ _profile_path() {
 # Return the resolved templates directory (env override or default).
 _templates_dir() {
   local dir="${CORRAL_TEMPLATES_DIR:-$DEFAULT_TEMPLATES_DIR}"
-  dir="${dir/#\~/$HOME}"
-  printf '%s' "$dir"
+  printf '%s' "$(_normalize_dir_path "$dir")"
 }
 
 # Return the path for a named template file.
@@ -63,23 +72,23 @@ _get_template_content() {
   fi
 }
 
-# Validate a template name: alphanumeric, hyphens, underscores only.
-# The regex [^a-zA-Z0-9_-] matches any character NOT in the allowed set;
-# if it matches, the name is invalid.
-_validate_template_name() {
-  local name="$1"
+# Validate a user-supplied identifier: must consist of alphanumeric characters,
+# hyphens, and underscores only. The regex [^a-zA-Z0-9_-] matches any character
+# NOT in the allowed set; if it matches, the name is invalid.
+# Used by both profile and template name validation.
+_validate_name() {
+  local kind="$1"
+  local name="$2"
   if [[ -z "$name" || "$name" =~ [^a-zA-Z0-9_-] ]]; then
-    die "invalid template name '${name}': use only letters, digits, hyphens, and underscores"
+    die "invalid ${kind} name '${name}': use only letters, digits, hyphens, and underscores"
   fi
 }
 
+# Validate a template name: alphanumeric, hyphens, underscores only.
+_validate_template_name() { _validate_name "template" "$1"; }
+
 # Validate a profile name: alphanumeric, hyphens, underscores only.
-_validate_profile_name() {
-  local name="$1"
-  if [[ -z "$name" || "$name" =~ [^a-zA-Z0-9_-] ]]; then
-    die "invalid profile name '${name}': use only letters, digits, hyphens, and underscores"
-  fi
-}
+_validate_profile_name() { _validate_name "profile" "$1"; }
 
 # Emit one line per profile in pipe-delimited format:
 #   {profile_name}|{model_spec}
@@ -207,7 +216,18 @@ _load_profile() {
 }
 
 # Return 0 if a section's flags should be included given the current
-# command mode and backend. Empty mode or backend matches everything.
+# command mode and backend.
+#
+# Matching rules:
+#   common            -> always include
+#   run / serve       -> matching mode, or any mode when mode is empty
+#   mlx / llama.cpp   -> matching backend, or any backend when backend is empty
+#   mlx.run etc.      -> both dimensions must match; empty selectors widen
+#                        the match instead of narrowing it
+#
+# Callers intentionally pass empty mode/backend when they want an unscoped read
+# of the file (for example, 'profile show'), so empty selector values act like
+# wildcards here.
 _section_matches() {
   local section="$1"
   local mode="$2"

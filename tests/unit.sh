@@ -327,6 +327,63 @@ test_collect_cached_model_entries() {
   fi
 }
 
+test_collect_mlx_model_entries_includes_safetensors_cache() {
+  local old_hf_hub_dir="$HF_HUB_DIR"
+  HF_HUB_DIR="${TEST_ROOT}/collect-mlx-hub"
+  local cache_dir="${HF_HUB_DIR}/models--unsloth--Qwen3.6-35B-A3B-UD-MLX-4bit"
+  local snapshot_dir="${cache_dir}/snapshots/abc123"
+  mkdir -p "$snapshot_dir"
+  printf 'x' > "${snapshot_dir}/model.safetensors"
+
+  local result
+  result="$(collect_mlx_model_entries)"
+  HF_HUB_DIR="$old_hf_hub_dir"
+
+  if assert_contains "$result" 'unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit' && assert_contains "$result" '|mlx'; then
+    pass 'collect_mlx_model_entries includes safetensors cache'
+  else
+    fail 'collect_mlx_model_entries includes safetensors cache' "got: $result"
+  fi
+}
+
+test_collect_mlx_model_entries_ignores_gguf_cache() {
+  local old_hf_hub_dir="$HF_HUB_DIR"
+  HF_HUB_DIR="${TEST_ROOT}/collect-mlx-ignore-gguf"
+  local cache_dir="${HF_HUB_DIR}/models--unsloth--Qwen3.6-35B-A3B-GGUF"
+  local snapshot_dir="${cache_dir}/snapshots/abc123"
+  mkdir -p "$snapshot_dir"
+  printf 'x' > "${snapshot_dir}/model-Q4_K_M.gguf"
+
+  local result
+  result="$(collect_mlx_model_entries)"
+  HF_HUB_DIR="$old_hf_hub_dir"
+
+  if ! assert_contains "$result" 'unsloth/Qwen3.6-35B-A3B-GGUF'; then
+    pass 'collect_mlx_model_entries ignores gguf cache'
+  else
+    fail 'collect_mlx_model_entries ignores gguf cache' "got: $result"
+  fi
+}
+
+test_collect_mlx_model_entries_ignores_no_weights_cache() {
+  local old_hf_hub_dir="$HF_HUB_DIR"
+  HF_HUB_DIR="${TEST_ROOT}/collect-mlx-no-weights"
+  local cache_dir="${HF_HUB_DIR}/models--unsloth--Qwen3.6-35B-A3B-Empty"
+  local snapshot_dir="${cache_dir}/snapshots/abc123"
+  mkdir -p "$snapshot_dir"
+  printf 'x' > "${snapshot_dir}/README.md"
+
+  local result
+  result="$(collect_mlx_model_entries)"
+  HF_HUB_DIR="$old_hf_hub_dir"
+
+  if ! assert_contains "$result" 'unsloth/Qwen3.6-35B-A3B-Empty'; then
+    pass 'collect_mlx_model_entries ignores cache without model weights'
+  else
+    fail 'collect_mlx_model_entries ignores cache without model weights' "got: $result"
+  fi
+}
+
 # ── _validate_profile_name / _validate_template_name ─────────────────────────
 
 test_validate_profile_name_valid() {
@@ -516,6 +573,28 @@ test_resolve_backend_rejects_invalid_value() {
   fi
 }
 
+# ── path normalization helpers ──────────────────────────────────────────────
+
+test_normalize_dir_path_expands_tilde_and_strips_trailing_slash() {
+  local result
+  result="$(_normalize_dir_path "~/corral-test/")"
+  if assert_eq "$result" "${HOME}/corral-test"; then
+    pass 'normalize_dir_path expands tilde and strips trailing slash'
+  else
+    fail 'normalize_dir_path expands tilde and strips trailing slash' "expected '${HOME}/corral-test', got '$result'"
+  fi
+}
+
+test_normalize_dir_path_preserves_root() {
+  local result
+  result="$(_normalize_dir_path "/")"
+  if assert_eq "$result" "/"; then
+    pass 'normalize_dir_path preserves root path'
+  else
+    fail 'normalize_dir_path preserves root path' "expected '/', got '$result'"
+  fi
+}
+
 test_print_tsv_table_dynamic_widths() {
   local result
   result="$(_print_tsv_table 'lrr' $'MODEL\tDOWNLOADS\tLIKES' <<'EOF'
@@ -675,6 +754,15 @@ _create_unit_gguf_fixture() {
   touch "${snapshot_dir}/${gguf_filename}"
 }
 
+_create_unit_profile_fixture() {
+  local profile_name="$1"
+  local content="$2"
+  local profiles_dir
+  profiles_dir="$(_profiles_dir)"
+  mkdir -p "$profiles_dir"
+  printf '%s\n' "$content" >"${profiles_dir}/${profile_name}"
+}
+
 test_infer_model_backend_cached_gguf() {
   _create_unit_gguf_fixture "unsloth/Llama-3-8B-GGUF" "model-Q4_K_M.gguf"
   local result
@@ -783,6 +871,208 @@ EOF
     pass '_infer_model_backend uncached USER/MODEL on Linux → mlx assumption'
   else
     fail '_infer_model_backend uncached USER/MODEL on Linux → mlx assumption' "expected 'mlx', got '$result'"
+  fi
+}
+
+# ── search/list/remove/launch command helpers ──────────────────────────────
+
+test_search_quants_jq_defs_extract_quants_and_default() {
+  local jq_defs payload quants default_quant
+  jq_defs="$(_search_quants_jq_defs)"
+  payload='[{"siblings":[{"rfilename":"demo/model-Q4_K_M.gguf"},{"rfilename":"demo/model-Q8_0.gguf"},{"rfilename":"demo/readme.md"}]}]'
+
+  quants="$(printf '%s' "$payload" | jq -r "${jq_defs}"'.[] | quants | join(",")')"
+  default_quant="$(printf '%s' "$payload" | jq -r "${jq_defs}"'.[] | default_quant')"
+
+  if assert_contains "$quants" 'Q4_K_M' && \
+     assert_contains "$quants" 'Q8_0' && \
+     assert_eq "$default_quant" 'Q4_K_M'; then
+    pass 'search_quants_jq_defs extracts quants and default quant'
+  else
+    fail 'search_quants_jq_defs extracts quants and default quant' "unexpected quants='$quants' default='$default_quant'"
+  fi
+}
+
+test_parse_search_args_with_query_and_flags() {
+  if ! _parse_search_args --backend llama.cpp gemma --sort downloads --limit 5 --quants --quiet; then
+    fail 'parse_search_args accepts query and flags' "unexpected parse error: ${REPLY_SEARCH_ERROR}"
+    return
+  fi
+
+  if assert_eq "$REPLY_SEARCH_BACKEND_FLAG" 'llama.cpp' && \
+     assert_eq "$REPLY_SEARCH_QUERY" 'gemma' && \
+     assert_eq "$REPLY_SEARCH_SORT" 'downloads' && \
+     assert_eq "$REPLY_SEARCH_LIMIT" '5' && \
+     assert_eq "$REPLY_SEARCH_QUANTS" 'true' && \
+     assert_eq "$REPLY_SEARCH_QUIET" 'true'; then
+    pass 'parse_search_args accepts query and flags'
+  else
+    fail 'parse_search_args accepts query and flags' "unexpected parse result: backend='$REPLY_SEARCH_BACKEND_FLAG' query='$REPLY_SEARCH_QUERY' sort='$REPLY_SEARCH_SORT' limit='$REPLY_SEARCH_LIMIT' quants='$REPLY_SEARCH_QUANTS' quiet='$REPLY_SEARCH_QUIET'"
+  fi
+}
+
+test_parse_search_args_rejects_extra_positional() {
+  set +e
+  _parse_search_args gemma qwen
+  local status=$?
+  set -e
+
+  if [[ $status -ne 0 ]] && assert_contains "$REPLY_SEARCH_ERROR" 'Unknown argument: qwen'; then
+    pass 'parse_search_args rejects extra positional arguments'
+  else
+    fail 'parse_search_args rejects extra positional arguments' "expected unknown argument error, got status=$status error='${REPLY_SEARCH_ERROR}'"
+  fi
+}
+
+test_parse_list_args_tracks_scope_flags() {
+  if ! _parse_list_args --backend mlx --quiet --models --templates; then
+    fail 'parse_list_args handles backend quiet and scope flags' "unexpected parse error: ${REPLY_LIST_ERROR}"
+    return
+  fi
+
+  if assert_eq "$REPLY_LIST_BACKEND_FLAG" 'mlx' && \
+     assert_eq "$REPLY_LIST_QUIET" 'true' && \
+     assert_eq "$REPLY_LIST_SHOW_MODELS" 'true' && \
+     assert_eq "$REPLY_LIST_SHOW_PROFILES" 'false' && \
+     assert_eq "$REPLY_LIST_SHOW_TEMPLATES" 'true'; then
+    pass 'parse_list_args handles backend quiet and scope flags'
+  else
+    fail 'parse_list_args handles backend quiet and scope flags' "unexpected scope result: backend='$REPLY_LIST_BACKEND_FLAG' quiet='$REPLY_LIST_QUIET' models='$REPLY_LIST_SHOW_MODELS' profiles='$REPLY_LIST_SHOW_PROFILES' templates='$REPLY_LIST_SHOW_TEMPLATES'"
+  fi
+}
+
+test_parse_remove_args_parses_backend_force_and_target() {
+  if ! _parse_remove_args --backend mlx demo/model --force; then
+    fail 'parse_remove_args accepts backend target and force' "unexpected parse error: ${REPLY_REMOVE_ERROR}"
+    return
+  fi
+
+  if assert_eq "$REPLY_REMOVE_BACKEND_FLAG" 'mlx' && \
+     assert_eq "$REPLY_REMOVE_TARGET_SPEC" 'demo/model' && \
+     assert_eq "$REPLY_REMOVE_FORCE" 'true'; then
+    pass 'parse_remove_args accepts backend target and force'
+  else
+    fail 'parse_remove_args accepts backend target and force' "unexpected parse result: backend='$REPLY_REMOVE_BACKEND_FLAG' target='$REPLY_REMOVE_TARGET_SPEC' force='$REPLY_REMOVE_FORCE'"
+  fi
+}
+
+test_parse_launch_args_parses_port_tool_and_passthrough_args() {
+  if ! _parse_launch_args --port 8082 pi -- --resume last; then
+    fail 'parse_launch_args accepts port tool and passthrough args' "unexpected parse error: ${REPLY_LAUNCH_ERROR}"
+    return
+  fi
+
+  if assert_eq "$REPLY_LAUNCH_REQUESTED_PORT" '8082' && \
+     assert_eq "$REPLY_LAUNCH_TOOL" 'pi' && \
+     assert_eq "${REPLY_LAUNCH_EXTRA_ARGS[*]}" '--resume last'; then
+    pass 'parse_launch_args accepts port tool and passthrough args'
+  else
+    fail 'parse_launch_args accepts port tool and passthrough args' "unexpected parse result: port='$REPLY_LAUNCH_REQUESTED_PORT' tool='$REPLY_LAUNCH_TOOL' extra='${REPLY_LAUNCH_EXTRA_ARGS[*]}'"
+  fi
+}
+
+test_parse_launch_args_rejects_invalid_port() {
+  set +e
+  _parse_launch_args --port abc pi
+  local status=$?
+  set -e
+
+  if [[ $status -ne 0 ]] && assert_contains "$REPLY_LAUNCH_ERROR" "invalid port 'abc'"; then
+    pass 'parse_launch_args rejects invalid port values'
+  else
+    fail 'parse_launch_args rejects invalid port values' "expected invalid port error, got status=$status error='${REPLY_LAUNCH_ERROR}'"
+  fi
+}
+
+# ── run/serve command helpers ───────────────────────────────────────────────
+
+test_parse_model_command_args_with_backend_and_extra_args() {
+  if ! _parse_model_command_args --backend mlx assistant -- --seed 7; then
+    fail 'parse_model_command_args accepts backend and passthrough args' "unexpected parse error: ${REPLY_MODEL_COMMAND_ERROR}"
+    return
+  fi
+
+  if assert_eq "$REPLY_MODEL_COMMAND_BACKEND_FLAG" "mlx" && \
+     assert_eq "$REPLY_MODEL_COMMAND_MODEL_SPEC" "assistant" && \
+     assert_eq "${REPLY_MODEL_COMMAND_EXTRA_ARGS[*]}" "--seed 7"; then
+    pass 'parse_model_command_args accepts backend and passthrough args'
+  else
+    fail 'parse_model_command_args accepts backend and passthrough args' "unexpected parse result: backend='$REPLY_MODEL_COMMAND_BACKEND_FLAG' model='$REPLY_MODEL_COMMAND_MODEL_SPEC' extra='${REPLY_MODEL_COMMAND_EXTRA_ARGS[*]}'"
+  fi
+}
+
+test_parse_model_command_args_rejects_unknown_argument() {
+  set +e
+  _parse_model_command_args assistant --seed
+  local status=$?
+  set -e
+
+  if [[ $status -ne 0 ]] && assert_contains "$REPLY_MODEL_COMMAND_ERROR" "Unknown argument: --seed"; then
+    pass 'parse_model_command_args rejects missing separator before passthrough args'
+  else
+    fail 'parse_model_command_args rejects missing separator before passthrough args' "expected unknown argument error, got status=$status error='${REPLY_MODEL_COMMAND_ERROR}'"
+  fi
+}
+
+test_resolve_model_command_context_filters_profile_for_llama_backend() {
+  _create_unit_profile_fixture "coder-llama" "$(cat <<'EOF'
+model=unsloth/gemma-4-27b-it-GGUF:Q4_K_M
+--temp 0.2
+[run]
+--top-k 40
+[mlx]
+--mlx-only 1
+[llama.cpp]
+--ctx-size 8192
+[llama.cpp.run]
+-ngl 999
+EOF
+)"
+
+  _resolve_model_command_context run "" "coder-llama"
+  local args_string="${REPLY_MODEL_COMMAND_PROFILE_ARGS[*]}"
+
+  if assert_eq "$REPLY_MODEL_COMMAND_BACKEND" "llama.cpp" && \
+     assert_eq "$REPLY_MODEL_COMMAND_MODEL_SPEC" "unsloth/gemma-4-27b-it-GGUF:Q4_K_M" && \
+     assert_contains "$args_string" "--temp 0.2" && \
+     assert_contains "$args_string" "--top-k 40" && \
+     assert_contains "$args_string" "--ctx-size 8192" && \
+     assert_contains "$args_string" "-ngl 999" && \
+     ! assert_contains "$args_string" "--mlx-only" 2>/dev/null; then
+    pass 'resolve_model_command_context loads llama.cpp-scoped profile args'
+  else
+    fail 'resolve_model_command_context loads llama.cpp-scoped profile args' "unexpected backend='$REPLY_MODEL_COMMAND_BACKEND' model='$REPLY_MODEL_COMMAND_MODEL_SPEC' args='$args_string'"
+  fi
+}
+
+test_resolve_model_command_context_filters_profile_for_explicit_mlx_backend() {
+  _create_unit_profile_fixture "coder-mlx" "$(cat <<'EOF'
+model=mlx-community/Qwen3-8B-4bit
+--temp 0.2
+[run]
+--top-k 40
+[mlx]
+--max-kv-size 4096
+[mlx.run]
+--seed 7
+[llama.cpp]
+-ngl 999
+EOF
+)"
+
+  _resolve_model_command_context run "mlx" "coder-mlx"
+  local args_string="${REPLY_MODEL_COMMAND_PROFILE_ARGS[*]}"
+
+  if assert_eq "$REPLY_MODEL_COMMAND_BACKEND" "mlx" && \
+     assert_eq "$REPLY_MODEL_COMMAND_MODEL_SPEC" "mlx-community/Qwen3-8B-4bit" && \
+     assert_contains "$args_string" "--temp 0.2" && \
+     assert_contains "$args_string" "--top-k 40" && \
+     assert_contains "$args_string" "--max-kv-size 4096" && \
+     assert_contains "$args_string" "--seed 7" && \
+     ! assert_contains "$args_string" "-ngl 999" 2>/dev/null; then
+    pass 'resolve_model_command_context loads explicit mlx-scoped profile args'
+  else
+    fail 'resolve_model_command_context loads explicit mlx-scoped profile args' "unexpected backend='$REPLY_MODEL_COMMAND_BACKEND' model='$REPLY_MODEL_COMMAND_MODEL_SPEC' args='$args_string'"
   fi
 }
 
@@ -1114,6 +1404,9 @@ test_cache_has_model_dir_missing
 test_cache_has_quant_match
 test_cache_has_quant_no_match
 test_collect_cached_model_entries
+test_collect_mlx_model_entries_includes_safetensors_cache
+test_collect_mlx_model_entries_ignores_gguf_cache
+test_collect_mlx_model_entries_ignores_no_weights_cache
 test_validate_profile_name_valid
 test_validate_profile_name_invalid
 test_validate_profile_name_empty
@@ -1128,6 +1421,8 @@ test_platform_default_backend_non_macos_arm64
 test_resolve_backend_prefers_flag
 test_resolve_backend_falls_back_to_platform_default
 test_resolve_backend_rejects_invalid_value
+test_normalize_dir_path_expands_tilde_and_strips_trailing_slash
+test_normalize_dir_path_preserves_root
 test_print_tsv_table_dynamic_widths
 test_print_tsv_table_ignores_ansi_width
 test_ansi_color_returns_named_escape_sequence
@@ -1143,6 +1438,17 @@ test_infer_model_backend_cached_mlx
 test_infer_model_backend_cached_mlx_on_linux
 test_infer_model_backend_uncached_arm64
 test_infer_model_backend_uncached_linux
+test_search_quants_jq_defs_extract_quants_and_default
+test_parse_search_args_with_query_and_flags
+test_parse_search_args_rejects_extra_positional
+test_parse_list_args_tracks_scope_flags
+test_parse_remove_args_parses_backend_force_and_target
+test_parse_launch_args_parses_port_tool_and_passthrough_args
+test_parse_launch_args_rejects_invalid_port
+test_parse_model_command_args_with_backend_and_extra_args
+test_parse_model_command_args_rejects_unknown_argument
+test_resolve_model_command_context_filters_profile_for_llama_backend
+test_resolve_model_command_context_filters_profile_for_explicit_mlx_backend
 test_section_matches_common_always
 test_section_matches_command_sections
 test_section_matches_backend_sections
