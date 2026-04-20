@@ -558,6 +558,13 @@ cmd_list() {
         model_entries+=("$entry")
       done < <(collect_cached_model_entries)
     fi
+    if [[ ${#model_entries[@]} -gt 0 ]]; then
+      local _sorted=()
+      while IFS= read -r entry; do
+        _sorted+=("$entry")
+      done < <(printf '%s\n' "${model_entries[@]}" | sort -f -t'|' -k1,1)
+      model_entries=("${_sorted[@]}")
+    fi
   fi
 
   if [[ "$SHOW_PROFILES" == "true" ]]; then
@@ -565,6 +572,13 @@ cmd_list() {
       [[ -z "$entry" ]] && continue
       profile_entries+=("$entry")
     done < <(collect_profile_entries)
+    if [[ ${#profile_entries[@]} -gt 0 ]]; then
+      local _sorted=()
+      while IFS= read -r entry; do
+        _sorted+=("$entry")
+      done < <(printf '%s\n' "${profile_entries[@]}" | sort -f -t'|' -k1,1)
+      profile_entries=("${_sorted[@]}")
+    fi
   fi
 
   if [[ "$SHOW_TEMPLATES" == "true" ]]; then
@@ -572,6 +586,13 @@ cmd_list() {
       [[ -z "$entry" ]] && continue
       template_entries+=("$entry")
     done < <(collect_template_entries)
+    if [[ ${#template_entries[@]} -gt 0 ]]; then
+      local _sorted=()
+      while IFS= read -r entry; do
+        _sorted+=("$entry")
+      done < <(printf '%s\n' "${template_entries[@]}" | sort -f -t'|' -k1,1)
+      template_entries=("${_sorted[@]}")
+    fi
   fi
 
   local model_count profile_count template_count
@@ -781,6 +802,53 @@ _remove_existing_profile_target() {
   return 1
 }
 
+# Infer the backend for a remove target from local cache evidence.
+# Decision order:
+#   1. An explicit quant suffix implies llama.cpp/GGUF removal.
+#   2. Cached GGUF files only -> llama.cpp.
+#   3. Cached MLX weights only -> mlx.
+#   4. Both cached in the same repo dir -> require an explicit --backend.
+#   5. No local evidence -> fall back to the normal backend defaulting rules.
+_infer_remove_backend() {
+  local target_spec="$1"
+  local model_name quant
+
+  _parse_model_spec "$target_spec"
+  model_name="$REPLY_MODEL"
+  quant="$REPLY_QUANT"
+
+  if [[ -n "$quant" ]]; then
+    printf 'llama.cpp'
+    return 0
+  fi
+
+  local cache_dir
+  cache_dir="$(model_name_to_cache_dir "$model_name" 2>/dev/null || true)"
+  if [[ -n "$cache_dir" && -d "$cache_dir" ]]; then
+    local has_gguf="false"
+    local has_mlx="false"
+
+    _cache_dir_has_gguf "$cache_dir" && has_gguf="true"
+    _cache_dir_has_mlx_weights "$cache_dir" && has_mlx="true"
+
+    case "${has_gguf}:${has_mlx}" in
+      true:false)
+        printf 'llama.cpp'
+        return 0
+        ;;
+      false:true)
+        printf 'mlx'
+        return 0
+        ;;
+      true:true)
+        die "model '${model_name}' has both GGUF and MLX cache entries. Re-run with --backend llama.cpp or --backend mlx to choose what to remove."
+        ;;
+    esac
+  fi
+
+  resolve_backend ""
+}
+
 _remove_llama_target() {
   local target_spec="$1"
   local force="$2"
@@ -887,7 +955,11 @@ cmd_remove() {
   fi
 
   local BACKEND
-  BACKEND="$(resolve_backend "$BACKEND_FLAG")"
+  if [[ -n "$BACKEND_FLAG" ]]; then
+    BACKEND="$(resolve_backend "$BACKEND_FLAG")"
+  else
+    BACKEND="$(_infer_remove_backend "$target_spec")"
+  fi
 
   if [[ "$BACKEND" == "mlx" ]]; then
     _remove_mlx_target "$target_spec" "$force"
