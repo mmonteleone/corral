@@ -1339,20 +1339,80 @@ cmd_pull() {
   die "pull did not cache requested quant '${quant}' for model '${model_name}' (cache dir: ${cache_dir})"
 }
 
+# Infer a backend hint from Hugging Face model metadata.
+# Prints "llama.cpp", "mlx", or nothing when the metadata is unavailable or
+# inconclusive. This keeps pull fast for obvious cases while avoiding a wrong
+# platform-default dispatch for GGUF repos whose names do not end in -GGUF.
+_infer_pull_backend_from_hf_metadata() {
+  local model_name="$1"
+  [[ "$model_name" == */* ]] || return 1
+  command -v curl >/dev/null 2>&1 || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+
+  local hf_token="${HF_TOKEN:-${HF_HUB_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-}}}"
+  local auth_header=()
+  [[ -n "$hf_token" ]] && auth_header=(-H "Authorization: Bearer ${hf_token}")
+
+  local metadata
+  metadata="$({
+    curl -fsSL \
+      --connect-timeout 15 \
+      --max-time 30 \
+      --retry 3 \
+      --retry-delay 2 \
+      "${auth_header[@]+"${auth_header[@]}"}" \
+      "https://huggingface.co/api/models/${model_name}"
+  } 2>/dev/null)" || return 1
+
+  if jq -e '
+      (((.tags // []) | map(ascii_downcase) | index("gguf")) != null) or
+      ((.siblings // []) | any(.rfilename?; (. // "" | ascii_downcase | endswith(".gguf"))))
+    ' >/dev/null 2>&1 <<<"$metadata"; then
+    printf 'llama.cpp'
+    return 0
+  fi
+
+  if jq -e '
+      (((.tags // []) | map(ascii_downcase) | index("mlx")) != null) or
+      (((.library_name // "") | ascii_downcase) == "mlx")
+    ' >/dev/null 2>&1 <<<"$metadata"; then
+    printf 'mlx'
+    return 0
+  fi
+
+  return 1
+}
+
 # Infer the backend for 'pull' from the model spec alone (nothing is cached yet).
-# - repo name ends in -GGUF (case-insensitive) → llama.cpp
-# - otherwise → platform default
+# Decision order:
+#   1. An explicit quant specifier ("user/model:Q4_K_M") → llama.cpp.
+#      MLX backends never use colon-separated quant tags; a ":quant" suffix
+#      is an unambiguous GGUF signal regardless of repo naming.
+#   2. Repo name ends in -GGUF (case-insensitive) → llama.cpp.
+#   3. Remote HF metadata says GGUF or MLX → use that backend.
+#   4. Otherwise → platform default (mlx on macOS arm64, llama.cpp elsewhere).
 # Note: this differs from _infer_model_backend, which assumes 'mlx' for any
-# USER/MODEL spec without GGUF evidence. For pull we use the platform default
-# so that tests on non-arm64 platforms get llama.cpp for ambiguous model names.
+# USER/MODEL spec without GGUF evidence. Pull can cheaply query HF metadata,
+# which avoids misrouting GGUF repos whose names omit the -GGUF suffix.
 _infer_pull_backend() {
   local model_spec="$1"
   local model_name="${model_spec%%:*}"
+  # An explicit quant specifier is only meaningful for GGUF/llama.cpp models.
+  if [[ "$model_spec" == *:* ]]; then
+    printf 'llama.cpp'
+    return 0
+  fi
   if [[ "$model_name" =~ -[Gg][Gg][Uu][Ff]$ ]]; then
     printf 'llama.cpp'
-  else
-    _platform_default_backend
+    return 0
   fi
+  local metadata_backend
+  metadata_backend="$(_infer_pull_backend_from_hf_metadata "$model_name" || true)"
+  if [[ -n "$metadata_backend" ]]; then
+    printf '%s' "$metadata_backend"
+    return 0
+  fi
+  _platform_default_backend
 }
 
 # Pull a model via mlx_lm.generate (MLX backend).
@@ -1452,40 +1512,41 @@ _parse_model_command_args() {
   REPLY_MODEL_COMMAND_EXTRA_ARGS=()
   REPLY_MODEL_COMMAND_ERROR=""
 
-  if [[ $# -gt 0 && "$1" == "--backend" ]]; then
-    if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == "--" ]]; then
-      REPLY_MODEL_COMMAND_ERROR="missing value for --backend"
-      return 1
-    fi
-    REPLY_MODEL_COMMAND_BACKEND_FLAG="$2"
-    _validate_backend_flag "$REPLY_MODEL_COMMAND_BACKEND_FLAG"
-    shift 2
-  fi
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --backend)
+        if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == "--" ]]; then
+          REPLY_MODEL_COMMAND_ERROR="missing value for --backend"
+          return 1
+        fi
+        REPLY_MODEL_COMMAND_BACKEND_FLAG="$2"
+        _validate_backend_flag "$REPLY_MODEL_COMMAND_BACKEND_FLAG"
+        shift 2
+        ;;
+      --)
+        shift
+        REPLY_MODEL_COMMAND_EXTRA_ARGS=("$@")
+        break
+        ;;
+      -*)
+        REPLY_MODEL_COMMAND_ERROR="Unknown argument: $1"
+        return 1
+        ;;
+      *)
+        if [[ -n "$REPLY_MODEL_COMMAND_MODEL_SPEC" ]]; then
+          REPLY_MODEL_COMMAND_ERROR="Unknown argument: $1"
+          return 1
+        fi
+        REPLY_MODEL_COMMAND_MODEL_SPEC="$1"
+        shift
+        ;;
+    esac
+  done
 
-  if [[ $# -eq 0 ]]; then
+  if [[ -z "$REPLY_MODEL_COMMAND_MODEL_SPEC" ]]; then
     REPLY_MODEL_COMMAND_ERROR="missing model or profile name"
     return 1
   fi
-
-  if [[ "$1" == "--" || "$1" == -* ]]; then
-    REPLY_MODEL_COMMAND_ERROR="Unknown argument: $1"
-    return 1
-  fi
-
-  REPLY_MODEL_COMMAND_MODEL_SPEC="$1"
-  shift
-
-  if [[ $# -eq 0 ]]; then
-    return 0
-  fi
-
-  if [[ "$1" != "--" ]]; then
-    REPLY_MODEL_COMMAND_ERROR="Unknown argument: $1"
-    return 1
-  fi
-
-  shift
-  REPLY_MODEL_COMMAND_EXTRA_ARGS=("$@")
 }
 
 # Resolve the model/backend/profile context shared by 'run' and 'serve'.

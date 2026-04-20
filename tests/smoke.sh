@@ -213,6 +213,23 @@ if [[ "$url" == *"/downloads/"* ]]; then
   exit 0
 fi
 
+if [[ "$url" == *"huggingface.co/api/models/"* && "$url" != *"?"* ]]; then
+  model_path="${url#*huggingface.co/api/models/}"
+  fixture_name="${model_path//\//--}"
+  fixture="${CORRAL_TEST_FIXTURES_DIR}/hf-model-${fixture_name}.json"
+
+  if [[ ! -f "$fixture" ]]; then
+    fixture="${CORRAL_TEST_FIXTURES_DIR}/hf-model-metadata.json"
+  fi
+
+  if [[ -f "$fixture" ]]; then
+    cat "$fixture" | emit_body
+  else
+    printf '{}\n' | emit_body
+  fi
+  exit 0
+fi
+
 if [[ "$url" == *"huggingface.co/api/models"* ]]; then
   query_string="${url#*\?}"
   search_term=""
@@ -892,6 +909,114 @@ EOF
   pass 'pull explicit llama.cpp override'
 }
 
+test_pull_uses_hf_metadata_to_detect_gguf_backend() {
+  local install_root="${HOME}/install-root"
+  local current_link="${install_root}/current"
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+  local args_log="${TEST_DIR}/llama-cli-args.log"
+  local model_name='HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive'
+  local expected_cache_dir="${HOME}/.cache/huggingface/hub/models--HauhauCS--Qwen3.5-9B-Uncensored-HauhauCS-Aggressive"
+
+  write_mock_uname "${TEST_DIR}/bin/uname" "Darwin" "arm64"
+  mkdir -p "$current_link" "$(dirname "$expected_cache_dir")"
+  : >"$args_log"
+
+  cat >"${CORRAL_TEST_FIXTURES_DIR}/hf-model-HauhauCS--Qwen3.5-9B-Uncensored-HauhauCS-Aggressive.json" <<'EOF'
+{
+  "id": "HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive",
+  "tags": ["gguf", "qwen"],
+  "siblings": [
+    {"rfilename": "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf"},
+    {"rfilename": "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf"}
+  ]
+}
+EOF
+
+  cat >"${current_link}/llama-cli" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >"$CORRAL_LLAMA_CLI_ARGS_LOG"
+mkdir -p "$CORRAL_EXPECTED_CACHE_DIR"
+exit 0
+EOF
+  chmod +x "${current_link}/llama-cli"
+
+  cat >"${TEST_DIR}/bin/mlx_lm.generate" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo 'pull unexpectedly dispatched to mlx_lm.generate' >&2
+exit 99
+EOF
+  chmod +x "${TEST_DIR}/bin/mlx_lm.generate"
+
+  export CORRAL_INSTALL_ROOT="$install_root"
+  export CORRAL_EXPECTED_CACHE_DIR="$expected_cache_dir"
+  export CORRAL_LLAMA_CLI_ARGS_LOG="$args_log"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" pull "$model_name"
+
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'pull uses HF metadata to detect GGUF backend' "pull failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  if ! assert_contains "$(cat "$args_log")" "-hf ${model_name}"; then
+    fail 'pull uses HF metadata to detect GGUF backend' "expected llama-cli args, got: $(cat "$args_log")"
+    return
+  fi
+
+  if ! assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/curl.log")" "huggingface.co/api/models/${model_name}"; then
+    fail 'pull uses HF metadata to detect GGUF backend' 'expected pull to query Hugging Face model metadata before dispatch'
+    return
+  fi
+
+  pass 'pull uses HF metadata to detect GGUF backend'
+}
+
+test_pull_model_before_backend_flag() {
+  local install_root="${HOME}/install-root"
+  local current_link="${install_root}/current"
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+  local args_log="${TEST_DIR}/llama-cli-args.log"
+  local model_name='demo/test-model'
+  local expected_cache_dir="${HOME}/.cache/huggingface/hub/models--demo--test-model"
+
+  write_mock_uname "${TEST_DIR}/bin/uname" "Darwin" "arm64"
+
+  mkdir -p "$current_link" "$(dirname "$expected_cache_dir")"
+  : >"$args_log"
+
+  cat >"${current_link}/llama-cli" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >"$CORRAL_LLAMA_CLI_ARGS_LOG"
+mkdir -p "$CORRAL_EXPECTED_CACHE_DIR"
+exit 0
+EOF
+  chmod +x "${current_link}/llama-cli"
+
+  export CORRAL_INSTALL_ROOT="$install_root"
+  export CORRAL_EXPECTED_CACHE_DIR="$expected_cache_dir"
+  export CORRAL_LLAMA_CLI_ARGS_LOG="$args_log"
+
+  # MODEL before --backend (reversed from the documented order)
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" pull "$model_name" --backend llama.cpp
+
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'pull accepts model before --backend flag' "pull failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  if ! assert_contains "$(cat "$args_log")" "-hf ${model_name}"; then
+    fail 'pull accepts model before --backend flag' "expected llama-cli pull args, got: $(cat "$args_log")"
+    return
+  fi
+
+  pass 'pull accepts model before --backend flag'
+}
+
 test_pull_quant_not_confused_by_other_cached_quant() {
   local install_root="${HOME}/install-root"
   local current_link="${install_root}/current"
@@ -1147,6 +1272,63 @@ EOF
 
   pass 'run forwards model and extra args'
   pass 'serve forwards jinja and extra args'
+}
+
+test_run_serve_model_before_backend_flag() {
+  local install_root="${HOME}/install-root"
+  local current_link="${install_root}/current"
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+  local run_args_log="${TEST_DIR}/run-args.log"
+  local serve_args_log="${TEST_DIR}/serve-args.log"
+
+  mkdir -p "$current_link"
+
+  cat >"${current_link}/llama-cli" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >"$CORRAL_RUN_ARGS_LOG"
+exit 0
+EOF
+  chmod +x "${current_link}/llama-cli"
+
+  cat >"${current_link}/llama-server" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >"$CORRAL_SERVE_ARGS_LOG"
+exit 0
+EOF
+  chmod +x "${current_link}/llama-server"
+
+  export CORRAL_INSTALL_ROOT="$install_root"
+  export CORRAL_RUN_ARGS_LOG="$run_args_log"
+  export CORRAL_SERVE_ARGS_LOG="$serve_args_log"
+
+  # MODEL before --backend (reversed from the documented order)
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" run demo/run-model --backend llama.cpp
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'run accepts model before --backend flag' "run failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  if ! assert_contains "$(cat "$run_args_log")" '-hf demo/run-model'; then
+    fail 'run accepts model before --backend flag' "expected run to invoke llama-cli, got: $(cat "$run_args_log")"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" serve demo/serve-model --backend llama.cpp
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'serve accepts model before --backend flag' "serve failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  if ! assert_contains "$(cat "$serve_args_log")" '-hf demo/serve-model'; then
+    fail 'serve accepts model before --backend flag' "expected serve to invoke llama-server, got: $(cat "$serve_args_log")"
+    return
+  fi
+
+  pass 'run accepts model before --backend flag'
+  pass 'serve accepts model before --backend flag'
 }
 
 test_launch_requires_port_when_multiple_servers() {
@@ -2894,6 +3076,42 @@ test_remove_missing_quant_errors() {
   fi
 
   pass 'remove missing quant errors'
+}
+
+test_remove_auto_detects_cached_gguf_backend() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+  local model_name='HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive'
+  local cache_dir="${HOME}/.cache/huggingface/hub/models--HauhauCS--Qwen3.5-9B-Uncensored-HauhauCS-Aggressive"
+
+  write_mock_uname "${TEST_DIR}/bin/uname" "Darwin" "arm64"
+  create_gguf_fixture "models--HauhauCS--Qwen3.5-9B-Uncensored-HauhauCS-Aggressive" "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf" 1024
+  create_gguf_fixture "models--HauhauCS--Qwen3.5-9B-Uncensored-HauhauCS-Aggressive" "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf" 2048
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" remove "$model_name" --force
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'remove auto-detects cached GGUF backend' "remove failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" "${model_name}:Q4_K_M" || ! assert_contains "$out" "${model_name}:Q6_K"; then
+    fail 'remove auto-detects cached GGUF backend' "expected quant variants to be listed, got: $out"
+    return
+  fi
+
+  if assert_contains "$out" 'Removed MLX model'; then
+    fail 'remove auto-detects cached GGUF backend' "did not expect MLX removal path output, got: $out"
+    return
+  fi
+
+  if [[ -d "$cache_dir" ]]; then
+    fail 'remove auto-detects cached GGUF backend' 'expected GGUF cache dir to be removed'
+    return
+  fi
+
+  pass 'remove auto-detects cached GGUF backend'
 }
 
 test_list_detects_nested_snapshot_quant() {
@@ -4790,6 +5008,15 @@ main() {
   test_pull_noninteractive
 
   setup_test_env
+  test_pull_explicit_llama_backend_override
+
+  setup_test_env
+  test_pull_uses_hf_metadata_to_detect_gguf_backend
+
+  setup_test_env
+  test_pull_model_before_backend_flag
+
+  setup_test_env
   test_pull_quant_not_confused_by_other_cached_quant
 
   setup_test_env
@@ -4803,6 +5030,9 @@ main() {
 
   setup_test_env
   test_run_and_serve_forwarding
+
+  setup_test_env
+  test_run_serve_model_before_backend_flag
 
   setup_test_env
   test_launch_requires_port_when_multiple_servers
@@ -4944,6 +5174,9 @@ main() {
 
   setup_test_env
   test_remove_missing_quant_errors
+
+  setup_test_env
+  test_remove_auto_detects_cached_gguf_backend
 
   setup_test_env
   test_list_detects_nested_snapshot_quant

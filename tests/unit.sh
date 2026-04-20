@@ -384,6 +384,109 @@ test_collect_mlx_model_entries_ignores_no_weights_cache() {
   fi
 }
 
+# ── _infer_remove_backend ───────────────────────────────────────────────────
+
+test_infer_remove_backend_quant_suffix() {
+  local mock_bin="${TEST_ROOT}/mock-uname-arm64-remove-quant"
+  mkdir -p "$mock_bin"
+  cat >"${mock_bin}/uname" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  -s) echo "Darwin" ;;
+  -m) echo "arm64" ;;
+  *)  echo "Darwin" ;;
+esac
+EOF
+  chmod +x "${mock_bin}/uname"
+
+  local result
+  result="$(PATH="${mock_bin}:$PATH" _infer_remove_backend "demo/model:Q4_K_M")"
+  if assert_eq "$result" "llama.cpp"; then
+    pass '_infer_remove_backend quant suffix -> llama.cpp'
+  else
+    fail '_infer_remove_backend quant suffix -> llama.cpp' "expected 'llama.cpp', got '$result'"
+  fi
+}
+
+test_infer_remove_backend_cached_gguf_on_arm64() {
+  local mock_bin="${TEST_ROOT}/mock-uname-arm64-remove-gguf"
+  mkdir -p "$mock_bin"
+  cat >"${mock_bin}/uname" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  -s) echo "Darwin" ;;
+  -m) echo "arm64" ;;
+  *)  echo "Darwin" ;;
+esac
+EOF
+  chmod +x "${mock_bin}/uname"
+
+  local model_name='HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive'
+  _create_unit_gguf_fixture "$model_name" "model-Q4_K_M.gguf"
+
+  local result
+  result="$(PATH="${mock_bin}:$PATH" _infer_remove_backend "$model_name")"
+  if assert_eq "$result" "llama.cpp"; then
+    pass '_infer_remove_backend cached GGUF on arm64 -> llama.cpp'
+  else
+    fail '_infer_remove_backend cached GGUF on arm64 -> llama.cpp' "expected 'llama.cpp', got '$result'"
+  fi
+}
+
+test_infer_remove_backend_cached_mlx_on_arm64() {
+  local mock_bin="${TEST_ROOT}/mock-uname-arm64-remove-mlx"
+  mkdir -p "$mock_bin"
+  cat >"${mock_bin}/uname" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  -s) echo "Darwin" ;;
+  -m) echo "arm64" ;;
+  *)  echo "Darwin" ;;
+esac
+EOF
+  chmod +x "${mock_bin}/uname"
+
+  local old_hf_hub_dir="$HF_HUB_DIR"
+  HF_HUB_DIR="${TEST_ROOT}/remove-mlx-hub"
+  local cache_dir="${HF_HUB_DIR}/models--mlx-community--Qwen3-8B-4bit"
+  local snapshot_dir="${cache_dir}/snapshots/abc123"
+  mkdir -p "$snapshot_dir"
+  printf 'x' > "${snapshot_dir}/model.safetensors"
+
+  local result
+  result="$(PATH="${mock_bin}:$PATH" _infer_remove_backend "mlx-community/Qwen3-8B-4bit")"
+  HF_HUB_DIR="$old_hf_hub_dir"
+
+  if assert_eq "$result" "mlx"; then
+    pass '_infer_remove_backend cached MLX on arm64 -> mlx'
+  else
+    fail '_infer_remove_backend cached MLX on arm64 -> mlx' "expected 'mlx', got '$result'"
+  fi
+}
+
+test_infer_remove_backend_rejects_mixed_cache() {
+  local old_hf_hub_dir="$HF_HUB_DIR"
+  HF_HUB_DIR="${TEST_ROOT}/remove-mixed-hub"
+  local cache_dir="${HF_HUB_DIR}/models--demo--mixed-model"
+  local snapshot_dir="${cache_dir}/snapshots/abc123"
+  mkdir -p "$snapshot_dir"
+  printf 'x' > "${snapshot_dir}/model-Q4_K_M.gguf"
+  printf 'x' > "${snapshot_dir}/model.safetensors"
+
+  local stderr_file="${TEST_ROOT}/stderr-remove-mixed"
+  set +e
+  (_infer_remove_backend 'demo/mixed-model' 2>"$stderr_file")
+  local status=$?
+  set -e
+  HF_HUB_DIR="$old_hf_hub_dir"
+
+  if [[ $status -ne 0 ]] && assert_contains "$(cat "$stderr_file")" 'has both GGUF and MLX cache entries'; then
+    pass '_infer_remove_backend rejects mixed cache without explicit backend'
+  else
+    fail '_infer_remove_backend rejects mixed cache without explicit backend' "expected ambiguity error, got status=$status stderr='$(cat "$stderr_file" 2>/dev/null)'"
+  fi
+}
+
 # ── _validate_profile_name / _validate_template_name ─────────────────────────
 
 test_validate_profile_name_valid() {
@@ -874,6 +977,113 @@ EOF
   fi
 }
 
+# ── _infer_pull_backend ──────────────────────────────────────────────────────
+
+test_infer_pull_backend_gguf_suffix() {
+  local result
+  result="$(_infer_pull_backend "unsloth/gemma-4-27B-it-GGUF")"
+  if assert_eq "$result" "llama.cpp"; then
+    pass '_infer_pull_backend -GGUF repo name → llama.cpp'
+  else
+    fail '_infer_pull_backend -GGUF repo name → llama.cpp' "expected 'llama.cpp', got '$result'"
+  fi
+}
+
+test_infer_pull_backend_quant_specifier() {
+  local mock_bin="${TEST_ROOT}/mock-uname-arm64-pull-quant"
+  mkdir -p "$mock_bin"
+  cat >"${mock_bin}/uname" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  -s) echo "Darwin" ;;
+  -m) echo "arm64" ;;
+  *)  echo "Darwin" ;;
+esac
+EOF
+  chmod +x "${mock_bin}/uname"
+
+  local result
+  # A quant specifier unambiguously means GGUF even on arm64 where platform
+  # default would otherwise be mlx.
+  result="$(PATH="${mock_bin}:$PATH" _infer_pull_backend "user/some-model:Q4_K_M")"
+  if assert_eq "$result" "llama.cpp"; then
+    pass '_infer_pull_backend quant specifier → llama.cpp regardless of platform'
+  else
+    fail '_infer_pull_backend quant specifier → llama.cpp regardless of platform' "expected 'llama.cpp', got '$result'"
+  fi
+}
+
+test_infer_pull_backend_remote_gguf_metadata() {
+  local mock_bin="${TEST_ROOT}/mock-uname-arm64-pull-remote-gguf"
+  mkdir -p "$mock_bin"
+  cat >"${mock_bin}/uname" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  -s) echo "Darwin" ;;
+  -m) echo "arm64" ;;
+  *)  echo "Darwin" ;;
+esac
+EOF
+  chmod +x "${mock_bin}/uname"
+
+  cat >"${mock_bin}/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+url="${@: -1}"
+if [[ "$url" == "https://huggingface.co/api/models/HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive" ]]; then
+  cat <<'JSON'
+{
+  "tags": ["gguf", "qwen"],
+  "siblings": [
+    {"rfilename": "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf"}
+  ]
+}
+JSON
+  exit 0
+fi
+echo "unexpected URL: $url" >&2
+exit 1
+EOF
+  chmod +x "${mock_bin}/curl"
+
+  local result
+  result="$(PATH="${mock_bin}:$PATH" _infer_pull_backend "HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive")"
+  if assert_eq "$result" "llama.cpp"; then
+    pass '_infer_pull_backend remote GGUF metadata → llama.cpp'
+  else
+    fail '_infer_pull_backend remote GGUF metadata → llama.cpp' "expected 'llama.cpp', got '$result'"
+  fi
+}
+
+test_infer_pull_backend_mlx_model_arm64() {
+  local mock_bin="${TEST_ROOT}/mock-uname-arm64-pull-mlx"
+  mkdir -p "$mock_bin"
+  cat >"${mock_bin}/uname" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  -s) echo "Darwin" ;;
+  -m) echo "arm64" ;;
+  *)  echo "Darwin" ;;
+esac
+EOF
+  chmod +x "${mock_bin}/uname"
+
+  cat >"${mock_bin}/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '{}\n'
+EOF
+  chmod +x "${mock_bin}/curl"
+
+  local result
+  result="$(PATH="${mock_bin}:$PATH" _infer_pull_backend "mlx-community/Qwen3-8B-4bit")"
+  if assert_eq "$result" "mlx"; then
+    pass '_infer_pull_backend plain MLX model on arm64 → mlx'
+  else
+    fail '_infer_pull_backend plain MLX model on arm64 → mlx' "expected 'mlx', got '$result'"
+  fi
+}
+
 # ── search/list/remove/launch command helpers ──────────────────────────────
 
 test_search_quants_jq_defs_extract_quants_and_default() {
@@ -941,6 +1151,72 @@ test_parse_list_args_tracks_scope_flags() {
   fi
 }
 
+test_cmd_list_sorts_models_alphabetically() {
+  local test_hub_dir="${TEST_ROOT}/hub-sort-models"
+  mkdir -p "${test_hub_dir}/models--zorg--zmodel/snapshots/abc123"
+  touch "${test_hub_dir}/models--zorg--zmodel/snapshots/abc123/model-Q4_K_M.gguf"
+  mkdir -p "${test_hub_dir}/models--alpha--amodel/snapshots/abc123"
+  touch "${test_hub_dir}/models--alpha--amodel/snapshots/abc123/model-Q4_K_M.gguf"
+  mkdir -p "${test_hub_dir}/models--meta-llama--mmodel/snapshots/abc123"
+  touch "${test_hub_dir}/models--meta-llama--mmodel/snapshots/abc123/model-Q4_K_M.gguf"
+
+  local saved_HF_HUB_DIR="$HF_HUB_DIR"
+  HF_HUB_DIR="$test_hub_dir"
+  local result
+  result="$(cmd_list --quiet --models --backend llama.cpp)"
+  HF_HUB_DIR="$saved_HF_HUB_DIR"
+
+  local before_meta="${result%%meta-llama*}"
+  local before_zorg="${result%%zorg*}"
+  if [[ "$before_meta" == *"alpha"* ]] && [[ "$before_zorg" == *"meta-llama"* ]]; then
+    pass 'cmd_list --models outputs models sorted alphabetically'
+  else
+    fail 'cmd_list --models outputs models sorted alphabetically' "got: $result"
+  fi
+}
+
+test_cmd_list_sorts_profiles_alphabetically() {
+  local test_profiles_dir="${TEST_ROOT}/profiles-sort"
+  mkdir -p "$test_profiles_dir"
+  printf 'model=user/zorg\n' > "${test_profiles_dir}/zorg-profile"
+  printf 'model=user/alpha\n' > "${test_profiles_dir}/alpha-profile"
+  printf 'model=user/middle\n' > "${test_profiles_dir}/middle-profile"
+
+  local saved_CORRAL_PROFILES_DIR="${CORRAL_PROFILES_DIR:-}"
+  CORRAL_PROFILES_DIR="$test_profiles_dir"
+  local result
+  result="$(cmd_list --quiet --profiles)"
+  CORRAL_PROFILES_DIR="$saved_CORRAL_PROFILES_DIR"
+
+  local before_middle="${result%%middle-profile*}"
+  local before_zorg="${result%%zorg-profile*}"
+  if [[ "$before_middle" == *"alpha-profile"* ]] && [[ "$before_zorg" == *"middle-profile"* ]]; then
+    pass 'cmd_list --profiles outputs profiles sorted alphabetically'
+  else
+    fail 'cmd_list --profiles outputs profiles sorted alphabetically' "got: $result"
+  fi
+}
+
+test_cmd_list_sorts_templates_alphabetically() {
+  local test_templates_dir="${TEST_ROOT}/templates-sort"
+  mkdir -p "$test_templates_dir"
+  printf '# user template\n' > "${test_templates_dir}/zeta-tmpl"
+  printf '# user template\n' > "${test_templates_dir}/alpha-tmpl"
+
+  local saved_CORRAL_TEMPLATES_DIR="${CORRAL_TEMPLATES_DIR:-}"
+  CORRAL_TEMPLATES_DIR="$test_templates_dir"
+  local result
+  result="$(cmd_list --quiet --templates)"
+  CORRAL_TEMPLATES_DIR="$saved_CORRAL_TEMPLATES_DIR"
+
+  local before_zeta="${result%%zeta-tmpl*}"
+  if [[ "$before_zeta" == *"alpha-tmpl"* ]]; then
+    pass 'cmd_list --templates outputs templates sorted alphabetically'
+  else
+    fail 'cmd_list --templates outputs templates sorted alphabetically' "got: $result"
+  fi
+}
+
 test_parse_remove_args_parses_backend_force_and_target() {
   if ! _parse_remove_args --backend mlx demo/model --force; then
     fail 'parse_remove_args accepts backend target and force' "unexpected parse error: ${REPLY_REMOVE_ERROR}"
@@ -998,6 +1274,35 @@ test_parse_model_command_args_with_backend_and_extra_args() {
     pass 'parse_model_command_args accepts backend and passthrough args'
   else
     fail 'parse_model_command_args accepts backend and passthrough args' "unexpected parse result: backend='$REPLY_MODEL_COMMAND_BACKEND_FLAG' model='$REPLY_MODEL_COMMAND_MODEL_SPEC' extra='${REPLY_MODEL_COMMAND_EXTRA_ARGS[*]}'"
+  fi
+}
+
+test_parse_model_command_args_model_before_backend() {
+  if ! _parse_model_command_args assistant --backend mlx; then
+    fail 'parse_model_command_args accepts model before --backend' "unexpected parse error: ${REPLY_MODEL_COMMAND_ERROR}"
+    return
+  fi
+
+  if assert_eq "$REPLY_MODEL_COMMAND_BACKEND_FLAG" "mlx" && \
+     assert_eq "$REPLY_MODEL_COMMAND_MODEL_SPEC" "assistant"; then
+    pass 'parse_model_command_args accepts model before --backend'
+  else
+    fail 'parse_model_command_args accepts model before --backend' "unexpected parse result: backend='$REPLY_MODEL_COMMAND_BACKEND_FLAG' model='$REPLY_MODEL_COMMAND_MODEL_SPEC'"
+  fi
+}
+
+test_parse_model_command_args_model_before_backend_with_extra_args() {
+  if ! _parse_model_command_args some/model --backend llama.cpp -- -ngl 999; then
+    fail 'parse_model_command_args accepts model before --backend with extra args' "unexpected parse error: ${REPLY_MODEL_COMMAND_ERROR}"
+    return
+  fi
+
+  if assert_eq "$REPLY_MODEL_COMMAND_BACKEND_FLAG" "llama.cpp" && \
+     assert_eq "$REPLY_MODEL_COMMAND_MODEL_SPEC" "some/model" && \
+     assert_eq "${REPLY_MODEL_COMMAND_EXTRA_ARGS[*]}" "-ngl 999"; then
+    pass 'parse_model_command_args accepts model before --backend with extra args'
+  else
+    fail 'parse_model_command_args accepts model before --backend with extra args' "unexpected: backend='$REPLY_MODEL_COMMAND_BACKEND_FLAG' model='$REPLY_MODEL_COMMAND_MODEL_SPEC' extra='${REPLY_MODEL_COMMAND_EXTRA_ARGS[*]}'"
   fi
 }
 
@@ -1407,6 +1712,10 @@ test_collect_cached_model_entries
 test_collect_mlx_model_entries_includes_safetensors_cache
 test_collect_mlx_model_entries_ignores_gguf_cache
 test_collect_mlx_model_entries_ignores_no_weights_cache
+test_infer_remove_backend_quant_suffix
+test_infer_remove_backend_cached_gguf_on_arm64
+test_infer_remove_backend_cached_mlx_on_arm64
+test_infer_remove_backend_rejects_mixed_cache
 test_validate_profile_name_valid
 test_validate_profile_name_invalid
 test_validate_profile_name_empty
@@ -1438,14 +1747,23 @@ test_infer_model_backend_cached_mlx
 test_infer_model_backend_cached_mlx_on_linux
 test_infer_model_backend_uncached_arm64
 test_infer_model_backend_uncached_linux
+test_infer_pull_backend_gguf_suffix
+test_infer_pull_backend_quant_specifier
+test_infer_pull_backend_remote_gguf_metadata
+test_infer_pull_backend_mlx_model_arm64
 test_search_quants_jq_defs_extract_quants_and_default
 test_parse_search_args_with_query_and_flags
 test_parse_search_args_rejects_extra_positional
 test_parse_list_args_tracks_scope_flags
+test_cmd_list_sorts_models_alphabetically
+test_cmd_list_sorts_profiles_alphabetically
+test_cmd_list_sorts_templates_alphabetically
 test_parse_remove_args_parses_backend_force_and_target
 test_parse_launch_args_parses_port_tool_and_passthrough_args
 test_parse_launch_args_rejects_invalid_port
 test_parse_model_command_args_with_backend_and_extra_args
+test_parse_model_command_args_model_before_backend
+test_parse_model_command_args_model_before_backend_with_extra_args
 test_parse_model_command_args_rejects_unknown_argument
 test_resolve_model_command_context_filters_profile_for_llama_backend
 test_resolve_model_command_context_filters_profile_for_explicit_mlx_backend
