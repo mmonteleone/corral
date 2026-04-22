@@ -4974,359 +4974,376 @@ test_search_defaults_to_platform_backend_on_apple_silicon() {
   pass 'search defaults to platform backend on Apple Silicon'
 }
 
+run_selected_tests() {
+  local test_name
+
+  for test_name in "$@"; do
+    if ! declare -F "$test_name" >/dev/null 2>&1; then
+      echo "Unknown test: $test_name" >&2
+      exit 1
+    fi
+    setup_test_env
+    "$test_name"
+  done
+}
+
 main() {
   command -v jq >/dev/null 2>&1 || {
     echo 'jq is required to run smoke tests.' >&2
     exit 1
   }
 
-  setup_test_env
-  test_generated_standalone_script
-  setup_test_env
-  test_top_level_help
-  test_argument_parsing_errors
+  if [[ $# -gt 0 ]]; then
+    run_selected_tests "$@"
+  else
+    setup_test_env
+    test_generated_standalone_script
+    setup_test_env
+    test_top_level_help
+    test_argument_parsing_errors
 
-  setup_test_env
-  test_install_flow
+    setup_test_env
+    test_install_flow
 
-  setup_test_env
-  test_install_rewrites_stale_bash_path_block
+    setup_test_env
+    test_install_rewrites_stale_bash_path_block
 
-  setup_test_env
-  test_install_creates_bash_completion_loader_when_bashrc_missing
+    setup_test_env
+    test_install_creates_bash_completion_loader_when_bashrc_missing
 
-  setup_test_env
-  test_install_creates_zsh_completion_loader
+    setup_test_env
+    test_install_creates_zsh_completion_loader
 
-  setup_test_env
-  test_install_zsh_completions_respect_zdotdir
+    setup_test_env
+    test_install_zsh_completions_respect_zdotdir
 
-  setup_test_env
-  test_update_flow
+    setup_test_env
+    test_update_flow
 
-  setup_test_env
-  test_pull_noninteractive
+    setup_test_env
+    test_pull_noninteractive
 
-  setup_test_env
-  test_pull_explicit_llama_backend_override
+    setup_test_env
+    test_pull_explicit_llama_backend_override
 
-  setup_test_env
-  test_pull_uses_hf_metadata_to_detect_gguf_backend
+    setup_test_env
+    test_pull_uses_hf_metadata_to_detect_gguf_backend
 
-  setup_test_env
-  test_pull_model_before_backend_flag
+    setup_test_env
+    test_pull_model_before_backend_flag
 
-  setup_test_env
-  test_pull_quant_not_confused_by_other_cached_quant
+    setup_test_env
+    test_pull_quant_not_confused_by_other_cached_quant
 
-  setup_test_env
-  test_status_and_versions
+    setup_test_env
+    test_status_and_versions
 
-  setup_test_env
-  test_prune_and_uninstall
+    setup_test_env
+    test_prune_and_uninstall
 
-  setup_test_env
-  test_remove_model_force
+    setup_test_env
+    test_remove_model_force
 
-  setup_test_env
-  test_run_and_serve_forwarding
+    setup_test_env
+    test_run_and_serve_forwarding
 
-  setup_test_env
-  test_run_serve_model_before_backend_flag
+    setup_test_env
+    test_run_serve_model_before_backend_flag
 
-  setup_test_env
-  test_launch_requires_port_when_multiple_servers
+    setup_test_env
+    test_launch_requires_port_when_multiple_servers
 
-  setup_test_env
-  test_launch_pi_updates_configs_and_reuses_matching_config
+    setup_test_env
+    test_launch_pi_updates_configs_and_reuses_matching_config
 
-  setup_test_env
-  test_launch_pi_backs_up_matching_preexisting_config_once
+    setup_test_env
+    test_launch_pi_backs_up_matching_preexisting_config_once
 
-  setup_test_env
-  test_launch_opencode_updates_jsonc_and_launches_tool
+    setup_test_env
+    test_launch_opencode_updates_jsonc_and_launches_tool
 
-  setup_test_env
-  test_launch_codex_is_unsupported
+    setup_test_env
+    test_launch_codex_is_unsupported
 
-  setup_test_env
-  test_mlx_install_uv_flow
+    setup_test_env
+    test_mlx_install_uv_flow
 
-  setup_test_env
-  test_mlx_run_dispatches
+    setup_test_env
+    test_mlx_run_dispatches
 
-  setup_test_env
-  test_mlx_serve_dispatches
+    setup_test_env
+    test_mlx_serve_dispatches
 
-  setup_test_env
-  test_mlx_run_with_profile
+    setup_test_env
+    test_mlx_run_with_profile
 
-  setup_test_env
-  test_mlx_run_profile_backend_sections
+    setup_test_env
+    test_mlx_run_profile_backend_sections
 
-  setup_test_env
-  test_mlx_serve_with_profile
+    setup_test_env
+    test_mlx_serve_with_profile
 
-  setup_test_env
-  test_llama_run_profile_backend_sections
+    setup_test_env
+    test_llama_run_profile_backend_sections
 
-  setup_test_env
-  test_profile_set_from_template_preserves_backend_sections
+    setup_test_env
+    test_profile_set_from_template_preserves_backend_sections
 
-  setup_test_env
-  test_template_set_preserves_backend_sections
+    setup_test_env
+    test_template_set_preserves_backend_sections
 
-  setup_test_env
-  test_template_backend_sections_inherited_by_profile
+    setup_test_env
+    test_template_backend_sections_inherited_by_profile
 
-  setup_test_env
-  test_mlx_quant_spec_warns
+    setup_test_env
+    test_mlx_quant_spec_warns
 
-  setup_test_env
-  test_mlx_pull_dispatches_generate
+    setup_test_env
+    test_mlx_pull_dispatches_generate
 
-  setup_test_env
-  test_mlx_pull_quant_spec_warns
+    setup_test_env
+    test_mlx_pull_quant_spec_warns
 
-  setup_test_env
-  test_mlx_list_shows_cached_models
+    setup_test_env
+    test_mlx_list_shows_cached_models
 
-  setup_test_env
-  test_mlx_remove_deletes_cache
+    setup_test_env
+    test_mlx_remove_deletes_cache
 
-  setup_test_env
-  test_mlx_remove_quant_warns_and_ignores
+    setup_test_env
+    test_mlx_remove_quant_warns_and_ignores
 
-  setup_test_env
-  test_mlx_remove_fails_when_model_in_use_by_server
+    setup_test_env
+    test_mlx_remove_fails_when_model_in_use_by_server
 
-  setup_test_env
-  test_mlx_remove_fails_when_model_in_use_by_chat
+    setup_test_env
+    test_mlx_remove_fails_when_model_in_use_by_chat
 
-  setup_test_env
-  test_mlx_update_uses_uv_upgrade
+    setup_test_env
+    test_mlx_update_uses_uv_upgrade
 
-  setup_test_env
-  test_mlx_versions_reports_installed_version
+    setup_test_env
+    test_mlx_versions_reports_installed_version
 
-  setup_test_env
-  test_mlx_versions_fallbacks_to_uv_tool_list
+    setup_test_env
+    test_mlx_versions_fallbacks_to_uv_tool_list
 
-  setup_test_env
-  test_mlx_prune_is_noop
+    setup_test_env
+    test_mlx_prune_is_noop
 
-  setup_test_env
-  test_mlx_uninstall_removes_tool
+    setup_test_env
+    test_mlx_uninstall_removes_tool
 
-  setup_test_env
-  test_mlx_unsupported_platform_errors
+    setup_test_env
+    test_mlx_unsupported_platform_errors
 
-  setup_test_env
-  test_status_shows_backend_and_platform
+    setup_test_env
+    test_status_shows_backend_and_platform
 
-  setup_test_env
-  test_status_combined_shows_both_backends
+    setup_test_env
+    test_status_combined_shows_both_backends
 
-  setup_test_env
-  test_list_llama_cpp_ignores_non_gguf_models
+    setup_test_env
+    test_list_llama_cpp_ignores_non_gguf_models
 
-  setup_test_env
-  test_mlx_list_discovers_cache
+    setup_test_env
+    test_mlx_list_discovers_cache
 
-  setup_test_env
-  test_mlx_list_discovers_safetensors_cache
+    setup_test_env
+    test_mlx_list_discovers_safetensors_cache
 
-  setup_test_env
-  test_list_default_includes_both_backends
+    setup_test_env
+    test_list_default_includes_both_backends
 
-  setup_test_env
-  test_list_shows_quant_variants
+    setup_test_env
+    test_list_shows_quant_variants
 
-  setup_test_env
-  test_list_colors_model_size_when_tty
+    setup_test_env
+    test_list_colors_model_size_when_tty
 
-  setup_test_env
-  test_list_quiet_includes_quant
+    setup_test_env
+    test_list_quiet_includes_quant
 
-  setup_test_env
-  test_list_includes_profiles_and_models_sections
+    setup_test_env
+    test_list_includes_profiles_and_models_sections
 
-  setup_test_env
-  test_list_models_profiles_scopes
+    setup_test_env
+    test_list_models_profiles_scopes
 
-  setup_test_env
-  test_list_quiet_includes_profiles_and_sections
+    setup_test_env
+    test_list_quiet_includes_profiles_and_sections
 
-  setup_test_env
-  test_list_includes_templates_section
+    setup_test_env
+    test_list_includes_templates_section
 
-  setup_test_env
-  test_list_templates_scope
+    setup_test_env
+    test_list_templates_scope
 
-  setup_test_env
-  test_list_quiet_includes_templates
+    setup_test_env
+    test_list_quiet_includes_templates
 
-  setup_test_env
-  test_remove_specific_quant
+    setup_test_env
+    test_remove_specific_quant
 
-  setup_test_env
-  test_remove_last_quant_cleans_dir
+    setup_test_env
+    test_remove_last_quant_cleans_dir
 
-  setup_test_env
-  test_remove_missing_quant_errors
+    setup_test_env
+    test_remove_missing_quant_errors
 
-  setup_test_env
-  test_remove_auto_detects_cached_gguf_backend
+    setup_test_env
+    test_remove_auto_detects_cached_gguf_backend
 
-  setup_test_env
-  test_list_detects_nested_snapshot_quant
+    setup_test_env
+    test_list_detects_nested_snapshot_quant
 
-  setup_test_env
-  test_remove_quant_is_case_insensitive
+    setup_test_env
+    test_remove_quant_is_case_insensitive
 
-  setup_test_env
-  test_pull_quant_match_is_case_insensitive
+    setup_test_env
+    test_pull_quant_match_is_case_insensitive
 
-  setup_test_env
-  test_search_no_query_returns_top_results
+    setup_test_env
+    test_search_no_query_returns_top_results
 
-  setup_test_env
-  test_search_returns_results
+    setup_test_env
+    test_search_returns_results
 
-  setup_test_env
-  test_search_quiet
+    setup_test_env
+    test_search_quiet
 
-  setup_test_env
-  test_search_empty_results
+    setup_test_env
+    test_search_empty_results
 
-  setup_test_env
-  test_search_sort_option
+    setup_test_env
+    test_search_sort_option
 
-  setup_test_env
-  test_search_quants_tabular
+    setup_test_env
+    test_search_quants_tabular
 
-  setup_test_env
-  test_search_quants_quiet
+    setup_test_env
+    test_search_quants_quiet
 
-  setup_test_env
-  test_search_default_quant_tabular
+    setup_test_env
+    test_search_default_quant_tabular
 
-  setup_test_env
-  test_search_default_backend_quants_warns_on_apple_silicon
+    setup_test_env
+    test_search_default_backend_quants_warns_on_apple_silicon
 
-  setup_test_env
-  test_search_mlx_backend_filters_results
+    setup_test_env
+    test_search_mlx_backend_filters_results
 
-  setup_test_env
-  test_search_mlx_uses_server_side_limit
+    setup_test_env
+    test_search_mlx_uses_server_side_limit
 
-  setup_test_env
-  test_search_mlx_quants_warns_and_ignores
+    setup_test_env
+    test_search_mlx_quants_warns_and_ignores
 
-  setup_test_env
-  test_browse_opens_url
+    setup_test_env
+    test_browse_opens_url
 
-  setup_test_env
-  test_browse_print_flag
+    setup_test_env
+    test_browse_print_flag
 
-  setup_test_env
-  test_browse_strips_quant
+    setup_test_env
+    test_browse_strips_quant
 
-  setup_test_env
-  test_browse_no_model_errors
+    setup_test_env
+    test_browse_no_model_errors
 
-  setup_test_env
-  test_ps_ignores_awk_false_positive
+    setup_test_env
+    test_ps_ignores_awk_false_positive
 
-  setup_test_env
-  test_search_bad_argument_errors
+    setup_test_env
+    test_search_bad_argument_errors
 
-  setup_test_env
-  test_profile_set_and_show
+    setup_test_env
+    test_profile_set_and_show
 
-  setup_test_env
-  test_profile_removed_subcommands_error
+    setup_test_env
+    test_profile_removed_subcommands_error
 
-  setup_test_env
-  test_remove_profile_via_top_level_remove
+    setup_test_env
+    test_remove_profile_via_top_level_remove
 
-  setup_test_env
-  test_profile_remove_missing_errors
+    setup_test_env
+    test_profile_remove_missing_errors
 
-  setup_test_env
-  test_profile_duplicate
+    setup_test_env
+    test_profile_duplicate
 
-  setup_test_env
-  test_profile_duplicate_dest_exists_errors
+    setup_test_env
+    test_profile_duplicate_dest_exists_errors
 
-  setup_test_env
-  test_profile_invalid_name_errors
+    setup_test_env
+    test_profile_invalid_name_errors
 
-  setup_test_env
-  test_profile_overwrite
+    setup_test_env
+    test_profile_overwrite
 
-  setup_test_env
-  test_run_with_profile
+    setup_test_env
+    test_run_with_profile
 
-  setup_test_env
-  test_serve_with_profile
+    setup_test_env
+    test_serve_with_profile
 
-  setup_test_env
-  test_serve_with_profile_and_extra_args
+    setup_test_env
+    test_serve_with_profile_and_extra_args
 
-  setup_test_env
-  test_run_missing_profile_errors
+    setup_test_env
+    test_run_missing_profile_errors
 
-  setup_test_env
-  test_profile_command_sections
+    setup_test_env
+    test_profile_command_sections
 
-  setup_test_env
-  test_profile_set_builtin_with_model
+    setup_test_env
+    test_profile_set_builtin_with_model
 
-  setup_test_env
-  test_profile_set_builtin_no_model_errors
+    setup_test_env
+    test_profile_set_builtin_no_model_errors
 
-  setup_test_env
-  test_profile_set_user_template
+    setup_test_env
+    test_profile_set_user_template
 
-  setup_test_env
-  test_profile_set_template_overwrites_existing
+    setup_test_env
+    test_profile_set_template_overwrites_existing
 
-  setup_test_env
-  test_profile_templates_subcommand_removed
+    setup_test_env
+    test_profile_templates_subcommand_removed
 
-  setup_test_env
-  test_template_show_builtin
+    setup_test_env
+    test_template_show_builtin
 
-  setup_test_env
-  test_template_set_and_show
+    setup_test_env
+    test_template_set_and_show
 
-  setup_test_env
-  test_template_remove
+    setup_test_env
+    test_template_remove
 
-  setup_test_env
-  test_template_remove_builtin_errors
+    setup_test_env
+    test_template_remove_builtin_errors
 
-  setup_test_env
-  test_template_user_overrides_builtin
+    setup_test_env
+    test_template_user_overrides_builtin
 
-  setup_test_env
-  test_combined_install_flow
+    setup_test_env
+    test_combined_install_flow
 
-  setup_test_env
-  test_combined_install_uses_homebrew_for_uv
+    setup_test_env
+    test_combined_install_uses_homebrew_for_uv
 
-  setup_test_env
-  test_combined_update_flow
+    setup_test_env
+    test_combined_update_flow
 
-  setup_test_env
-  test_combined_uninstall_flow
+    setup_test_env
+    test_combined_uninstall_flow
 
-  setup_test_env
-  test_combined_versions_flow
+    setup_test_env
+    test_combined_versions_flow
 
-  setup_test_env
-  test_search_defaults_to_platform_backend_on_apple_silicon
+    setup_test_env
+    test_search_defaults_to_platform_backend_on_apple_silicon
+  fi
 
   printf '\n'
   printf 'Passed: %s\n' "$PASS_COUNT"

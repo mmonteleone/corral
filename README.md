@@ -260,9 +260,16 @@ Source entry point is [src/corral.sh](src/corral.sh) with modules in [src/lib/](
 ```sh
 bash tools/build.sh              # build standalone artifact
 shellcheck src/corral.sh src/lib/*.sh   # lint
-bash tests/unit.sh               # unit tests
-bash tests/smoke.sh              # smoke tests
+bash tests/unit.sh               # full unit suite
+bash tests/smoke.sh              # full smoke suite
 ```
+
+```sh
+bash tests/unit.sh test_parse_model_spec_without_quant  # single unit test
+bash tests/smoke.sh test_search_returns_results         # single smoke test
+```
+
+`dist/corral` is generated output. Edit `src/corral.sh`, `src/lib/*.sh`, `src/templates/*.conf`, `src/launch-templates/*.tmpl`, or `src/jq/search-quants.jq`, then rebuild.
 
 ## License
 
