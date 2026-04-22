@@ -1576,6 +1576,18 @@ test_completions_bash_profile_set_positionals() {
   pass '_completions_bash completes profile set template/model positionals'
 }
 
+run_selected_tests() {
+  local test_name
+
+  for test_name in "$@"; do
+    if ! declare -F "$test_name" >/dev/null 2>&1; then
+      echo "Unknown test: $test_name" >&2
+      exit 1
+    fi
+    "$test_name"
+  done
+}
+
 # ── launch helpers ───────────────────────────────────────────────────────────
 
 test_render_merged_json_file_preserves_unrelated_keys() {
@@ -1684,104 +1696,108 @@ test_completions_include_launch() {
 
 # ── run tests ────────────────────────────────────────────────────────────────
 
-test_parse_model_spec_without_quant
-test_parse_model_spec_with_quant
-test_parse_model_spec_with_compound_quant
-test_extract_quant_standard
-test_extract_quant_with_prefix
-test_extract_quant_f16
-test_extract_quant_bf16
-test_extract_quant_sharded
-test_extract_quant_iq
-test_normalize_quant_uppercases
-test_normalize_quant_dashes_to_underscores
-test_normalize_quant_already_normalized
-test_model_name_to_cache_dir
-test_model_name_to_cache_dir_invalid
-test_cache_dir_to_model_name
-test_find_cached_gguf_files
-test_find_gguf_by_quant_match
-test_find_gguf_by_quant_case_insensitive
-test_cached_quant_tags
-test_cached_quant_tags_empty
-test_cache_has_model_dir_exists
-test_cache_has_model_dir_missing
-test_cache_has_quant_match
-test_cache_has_quant_no_match
-test_collect_cached_model_entries
-test_collect_mlx_model_entries_includes_safetensors_cache
-test_collect_mlx_model_entries_ignores_gguf_cache
-test_collect_mlx_model_entries_ignores_no_weights_cache
-test_infer_remove_backend_quant_suffix
-test_infer_remove_backend_cached_gguf_on_arm64
-test_infer_remove_backend_cached_mlx_on_arm64
-test_infer_remove_backend_rejects_mixed_cache
-test_validate_profile_name_valid
-test_validate_profile_name_invalid
-test_validate_profile_name_empty
-test_validate_template_name_valid
-test_validate_template_name_invalid
-test_builtin_template_chat
-test_builtin_template_code
-test_builtin_template_unknown
-test_detect_arch
-test_platform_default_backend_macos_arm64
-test_platform_default_backend_non_macos_arm64
-test_resolve_backend_prefers_flag
-test_resolve_backend_falls_back_to_platform_default
-test_resolve_backend_rejects_invalid_value
-test_normalize_dir_path_expands_tilde_and_strips_trailing_slash
-test_normalize_dir_path_preserves_root
-test_print_tsv_table_dynamic_widths
-test_print_tsv_table_ignores_ansi_width
-test_ansi_color_returns_named_escape_sequence
-test_wrap_color_applies_named_escape_sequence
-test_wrap_stdout_color_is_plain_without_tty
-test_stdout_supports_color_disabled_without_tty
-test_stdout_supports_color_disabled_by_no_color
-test_stdout_supports_color_disabled_for_dumb_term
-test_is_mlx_platform_arm64
-test_is_mlx_platform_non_arm64
-test_infer_model_backend_cached_gguf
-test_infer_model_backend_cached_mlx
-test_infer_model_backend_cached_mlx_on_linux
-test_infer_model_backend_uncached_arm64
-test_infer_model_backend_uncached_linux
-test_infer_pull_backend_gguf_suffix
-test_infer_pull_backend_quant_specifier
-test_infer_pull_backend_remote_gguf_metadata
-test_infer_pull_backend_mlx_model_arm64
-test_search_quants_jq_defs_extract_quants_and_default
-test_parse_search_args_with_query_and_flags
-test_parse_search_args_rejects_extra_positional
-test_parse_list_args_tracks_scope_flags
-test_cmd_list_sorts_models_alphabetically
-test_cmd_list_sorts_profiles_alphabetically
-test_cmd_list_sorts_templates_alphabetically
-test_parse_remove_args_parses_backend_force_and_target
-test_parse_launch_args_parses_port_tool_and_passthrough_args
-test_parse_launch_args_rejects_invalid_port
-test_parse_model_command_args_with_backend_and_extra_args
-test_parse_model_command_args_model_before_backend
-test_parse_model_command_args_model_before_backend_with_extra_args
-test_parse_model_command_args_rejects_unknown_argument
-test_resolve_model_command_context_filters_profile_for_llama_backend
-test_resolve_model_command_context_filters_profile_for_explicit_mlx_backend
-test_section_matches_common_always
-test_section_matches_command_sections
-test_section_matches_backend_sections
-test_section_matches_compound_sections
-test_collect_template_entries_includes_builtins
-test_render_merged_json_file_preserves_unrelated_keys
-test_render_merged_json_file_accepts_jsonc
-test_render_merged_json_file_migrates_pi_models_schema
-test_launch_tool_supports_process_matrix
-test_completions_fish_generation
-test_completions_fish_profile_set_positionals
-test_completions_include_launch
-test_completions_zsh_profile_template_filtering
-test_completions_zsh_profile_set_positionals
-test_completions_bash_profile_template_filtering
-test_completions_bash_profile_set_positionals
+if [[ $# -gt 0 ]]; then
+  run_selected_tests "$@"
+else
+  test_parse_model_spec_without_quant
+  test_parse_model_spec_with_quant
+  test_parse_model_spec_with_compound_quant
+  test_extract_quant_standard
+  test_extract_quant_with_prefix
+  test_extract_quant_f16
+  test_extract_quant_bf16
+  test_extract_quant_sharded
+  test_extract_quant_iq
+  test_normalize_quant_uppercases
+  test_normalize_quant_dashes_to_underscores
+  test_normalize_quant_already_normalized
+  test_model_name_to_cache_dir
+  test_model_name_to_cache_dir_invalid
+  test_cache_dir_to_model_name
+  test_find_cached_gguf_files
+  test_find_gguf_by_quant_match
+  test_find_gguf_by_quant_case_insensitive
+  test_cached_quant_tags
+  test_cached_quant_tags_empty
+  test_cache_has_model_dir_exists
+  test_cache_has_model_dir_missing
+  test_cache_has_quant_match
+  test_cache_has_quant_no_match
+  test_collect_cached_model_entries
+  test_collect_mlx_model_entries_includes_safetensors_cache
+  test_collect_mlx_model_entries_ignores_gguf_cache
+  test_collect_mlx_model_entries_ignores_no_weights_cache
+  test_infer_remove_backend_quant_suffix
+  test_infer_remove_backend_cached_gguf_on_arm64
+  test_infer_remove_backend_cached_mlx_on_arm64
+  test_infer_remove_backend_rejects_mixed_cache
+  test_validate_profile_name_valid
+  test_validate_profile_name_invalid
+  test_validate_profile_name_empty
+  test_validate_template_name_valid
+  test_validate_template_name_invalid
+  test_builtin_template_chat
+  test_builtin_template_code
+  test_builtin_template_unknown
+  test_detect_arch
+  test_platform_default_backend_macos_arm64
+  test_platform_default_backend_non_macos_arm64
+  test_resolve_backend_prefers_flag
+  test_resolve_backend_falls_back_to_platform_default
+  test_resolve_backend_rejects_invalid_value
+  test_normalize_dir_path_expands_tilde_and_strips_trailing_slash
+  test_normalize_dir_path_preserves_root
+  test_print_tsv_table_dynamic_widths
+  test_print_tsv_table_ignores_ansi_width
+  test_ansi_color_returns_named_escape_sequence
+  test_wrap_color_applies_named_escape_sequence
+  test_wrap_stdout_color_is_plain_without_tty
+  test_stdout_supports_color_disabled_without_tty
+  test_stdout_supports_color_disabled_by_no_color
+  test_stdout_supports_color_disabled_for_dumb_term
+  test_is_mlx_platform_arm64
+  test_is_mlx_platform_non_arm64
+  test_infer_model_backend_cached_gguf
+  test_infer_model_backend_cached_mlx
+  test_infer_model_backend_cached_mlx_on_linux
+  test_infer_model_backend_uncached_arm64
+  test_infer_model_backend_uncached_linux
+  test_infer_pull_backend_gguf_suffix
+  test_infer_pull_backend_quant_specifier
+  test_infer_pull_backend_remote_gguf_metadata
+  test_infer_pull_backend_mlx_model_arm64
+  test_search_quants_jq_defs_extract_quants_and_default
+  test_parse_search_args_with_query_and_flags
+  test_parse_search_args_rejects_extra_positional
+  test_parse_list_args_tracks_scope_flags
+  test_cmd_list_sorts_models_alphabetically
+  test_cmd_list_sorts_profiles_alphabetically
+  test_cmd_list_sorts_templates_alphabetically
+  test_parse_remove_args_parses_backend_force_and_target
+  test_parse_launch_args_parses_port_tool_and_passthrough_args
+  test_parse_launch_args_rejects_invalid_port
+  test_parse_model_command_args_with_backend_and_extra_args
+  test_parse_model_command_args_model_before_backend
+  test_parse_model_command_args_model_before_backend_with_extra_args
+  test_parse_model_command_args_rejects_unknown_argument
+  test_resolve_model_command_context_filters_profile_for_llama_backend
+  test_resolve_model_command_context_filters_profile_for_explicit_mlx_backend
+  test_section_matches_common_always
+  test_section_matches_command_sections
+  test_section_matches_backend_sections
+  test_section_matches_compound_sections
+  test_collect_template_entries_includes_builtins
+  test_render_merged_json_file_preserves_unrelated_keys
+  test_render_merged_json_file_accepts_jsonc
+  test_render_merged_json_file_migrates_pi_models_schema
+  test_launch_tool_supports_process_matrix
+  test_completions_fish_generation
+  test_completions_fish_profile_set_positionals
+  test_completions_include_launch
+  test_completions_zsh_profile_template_filtering
+  test_completions_zsh_profile_set_positionals
+  test_completions_bash_profile_template_filtering
+  test_completions_bash_profile_set_positionals
+fi
 
 report_results
