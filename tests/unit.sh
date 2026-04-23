@@ -11,10 +11,10 @@ HF_HUB_DIR="${HOME}/.cache/huggingface/hub"
 
 source_corral_libs
 
-# ── _parse_model_spec ─────────────────────────────────────────────────────────
+# ── parse_model_spec ──────────────────────────────────────────────────────────
 
 test_parse_model_spec_without_quant() {
-  _parse_model_spec "user/model"
+  parse_model_spec "user/model"
   if assert_eq "$REPLY_MODEL" "user/model" && assert_eq "$REPLY_QUANT" ""; then
     pass 'parse_model_spec without quant'
   else
@@ -23,7 +23,7 @@ test_parse_model_spec_without_quant() {
 }
 
 test_parse_model_spec_with_quant() {
-  _parse_model_spec "user/model:Q4_K_M"
+  parse_model_spec "user/model:Q4_K_M"
   if assert_eq "$REPLY_MODEL" "user/model" && assert_eq "$REPLY_QUANT" "Q4_K_M"; then
     pass 'parse_model_spec with quant'
   else
@@ -32,7 +32,7 @@ test_parse_model_spec_with_quant() {
 }
 
 test_parse_model_spec_with_compound_quant() {
-  _parse_model_spec "unsloth/gemma-GGUF:UD-Q6_K_XL"
+  parse_model_spec "unsloth/gemma-GGUF:UD-Q6_K_XL"
   if assert_eq "$REPLY_MODEL" "unsloth/gemma-GGUF" && assert_eq "$REPLY_QUANT" "UD-Q6_K_XL"; then
     pass 'parse_model_spec with compound quant'
   else
@@ -171,7 +171,7 @@ test_cache_dir_to_model_name() {
   fi
 }
 
-# ── _find_cached_gguf_files ──────────────────────────────────────────────────
+# ── find_cached_gguf_files ───────────────────────────────────────────────────
 
 test_find_cached_gguf_files() {
   local cache_dir="${TEST_ROOT}/models--test--model"
@@ -182,7 +182,7 @@ test_find_cached_gguf_files() {
   touch "${snapshot_dir}/not-a-model.txt"
 
   local result
-  result="$(_find_cached_gguf_files "$cache_dir")"
+  result="$(find_cached_gguf_files "$cache_dir")"
   if assert_contains "$result" "model-Q4_K_M.gguf" && \
      assert_contains "$result" "model-Q6_K.gguf" && \
      ! assert_contains "$result" "not-a-model.txt" 2>/dev/null; then
@@ -192,7 +192,7 @@ test_find_cached_gguf_files() {
   fi
 }
 
-# ── _find_gguf_by_quant ─────────────────────────────────────────────────────
+# ── find_gguf_by_quant ──────────────────────────────────────────────────────
 
 test_find_gguf_by_quant_match() {
   local cache_dir="${TEST_ROOT}/models--test--quant-match"
@@ -202,7 +202,7 @@ test_find_gguf_by_quant_match() {
   touch "${snapshot_dir}/model-Q6_K.gguf"
 
   local result
-  result="$(_find_gguf_by_quant "$cache_dir" "Q4_K_M")"
+  result="$(find_gguf_by_quant "$cache_dir" "Q4_K_M")"
   if assert_contains "$result" "model-Q4_K_M.gguf" && \
      ! assert_contains "$result" "model-Q6_K.gguf" 2>/dev/null; then
     pass 'find_gguf_by_quant matches correct quant'
@@ -218,7 +218,7 @@ test_find_gguf_by_quant_case_insensitive() {
   touch "${snapshot_dir}/model-Q4_K_M.gguf"
 
   local result
-  result="$(_find_gguf_by_quant "$cache_dir" "q4_k_m")"
+  result="$(find_gguf_by_quant "$cache_dir" "q4_k_m")"
   if assert_contains "$result" "model-Q4_K_M.gguf"; then
     pass 'find_gguf_by_quant case insensitive'
   else
@@ -226,7 +226,7 @@ test_find_gguf_by_quant_case_insensitive() {
   fi
 }
 
-# ── cached_quant_tags ────────────────────────────────────────────────────────
+# ── _cached_quant_tags ───────────────────────────────────────────────────────
 
 test_cached_quant_tags() {
   local cache_dir="${TEST_ROOT}/models--test--tags"
@@ -236,11 +236,11 @@ test_cached_quant_tags() {
   touch "${snapshot_dir}/model-Q6_K.gguf"
 
   local result
-  result="$(cached_quant_tags "$cache_dir")"
+  result="$(_cached_quant_tags "$cache_dir")"
   if assert_contains "$result" "Q4_K_M" && assert_contains "$result" "Q6_K"; then
-    pass 'cached_quant_tags lists all tags'
+    pass '_cached_quant_tags lists all tags'
   else
-    fail 'cached_quant_tags lists all tags' "got: $result"
+    fail '_cached_quant_tags lists all tags' "got: $result"
   fi
 }
 
@@ -249,11 +249,11 @@ test_cached_quant_tags_empty() {
   mkdir -p "$cache_dir"
 
   local result
-  result="$(cached_quant_tags "$cache_dir")"
+  result="$(_cached_quant_tags "$cache_dir")"
   if assert_eq "$result" ""; then
-    pass 'cached_quant_tags empty dir'
+    pass '_cached_quant_tags empty dir'
   else
-    fail 'cached_quant_tags empty dir' "expected empty, got: $result"
+    fail '_cached_quant_tags empty dir' "expected empty, got: $result"
   fi
 }
 
@@ -583,17 +583,17 @@ test_builtin_template_unknown() {
   fi
 }
 
-# ── detect_arch ──────────────────────────────────────────────────────────────
+# ── _detect_arch ─────────────────────────────────────────────────────────────
 
 test_detect_arch() {
   local result
-  result="$(detect_arch)"
+  result="$(_detect_arch)"
   local expected
   expected="$(expected_arch)"
   if assert_eq "$result" "$expected"; then
-    pass 'detect_arch matches expected'
+    pass '_detect_arch matches expected'
   else
-    fail 'detect_arch matches expected' "expected '$expected', got '$result'"
+    fail '_detect_arch matches expected' "expected '$expected', got '$result'"
   fi
 }
 
@@ -613,7 +613,7 @@ esac
 EOF
   chmod +x "${mock_bin}/uname"
 
-  result="$(PATH="${mock_bin}:$PATH" _platform_default_backend)"
+  result="$(PATH="${mock_bin}:$PATH" platform_default_backend)"
   if assert_eq "$result" "mlx"; then
     pass 'platform default backend is mlx on Darwin/arm64'
   else
@@ -635,7 +635,7 @@ esac
 EOF
   chmod +x "${mock_bin}/uname"
 
-  result="$(PATH="${mock_bin}:$PATH" _platform_default_backend)"
+  result="$(PATH="${mock_bin}:$PATH" platform_default_backend)"
   if assert_eq "$result" "llama.cpp"; then
     pass 'platform default backend is llama.cpp on non-Darwin/arm64'
   else
@@ -680,7 +680,7 @@ test_resolve_backend_rejects_invalid_value() {
 
 test_normalize_dir_path_expands_tilde_and_strips_trailing_slash() {
   local result
-  result="$(_normalize_dir_path "~/corral-test/")"
+  result="$(normalize_dir_path "~/corral-test/")"
   if assert_eq "$result" "${HOME}/corral-test"; then
     pass 'normalize_dir_path expands tilde and strips trailing slash'
   else
@@ -690,7 +690,7 @@ test_normalize_dir_path_expands_tilde_and_strips_trailing_slash() {
 
 test_normalize_dir_path_preserves_root() {
   local result
-  result="$(_normalize_dir_path "/")"
+  result="$(normalize_dir_path "/")"
   if assert_eq "$result" "/"; then
     pass 'normalize_dir_path preserves root path'
   else
@@ -700,7 +700,7 @@ test_normalize_dir_path_preserves_root() {
 
 test_print_tsv_table_dynamic_widths() {
   local result
-  result="$(_print_tsv_table 'lrr' $'MODEL\tDOWNLOADS\tLIKES' <<'EOF'
+  result="$(print_tsv_table 'lrr' $'MODEL\tDOWNLOADS\tLIKES' <<'EOF'
 short	12	3
 much-longer-model	4	55
 EOF
@@ -723,7 +723,7 @@ EOF
 
 test_print_tsv_table_ignores_ansi_width() {
   local result
-  result="$(_print_tsv_table 'lll' $'MODEL\tBACKEND\tSIZE' <<EOF
+  result="$(print_tsv_table 'lll' $'MODEL\tBACKEND\tSIZE' <<EOF
 demo/test-GGUF	llama.cpp	${ANSI_COLOR_GREEN}2.0K${ANSI_COLOR_RESET}
 demo/test-GGUF:Q8_0	llama.cpp	${ANSI_COLOR_GREEN}4.0K${ANSI_COLOR_RESET}
 EOF
@@ -750,7 +750,7 @@ test_ansi_color_returns_named_escape_sequence() {
 
 test_wrap_color_applies_named_escape_sequence() {
   local result
-  result="$(_wrap_color green '2.0K')"
+  result="$(wrap_color green '2.0K')"
 
   if assert_eq "$result" "${ANSI_COLOR_GREEN}2.0K${ANSI_COLOR_RESET}"; then
     pass 'wrap_color applies named escape sequence'
@@ -773,7 +773,7 @@ test_wrap_stdout_color_is_plain_without_tty() {
 
 test_stdout_supports_color_disabled_without_tty() {
   local stdout_file="${TEST_ROOT}/stdout.no-tty"
-  if ! (_stdout_supports_color >"$stdout_file"); then
+  if ! (stdout_supports_color >"$stdout_file"); then
     pass 'stdout_supports_color disables color without tty'
   else
     fail 'stdout_supports_color disables color without tty' 'expected non-tty stdout to disable color'
@@ -782,7 +782,7 @@ test_stdout_supports_color_disabled_without_tty() {
 
 test_stdout_supports_color_disabled_by_no_color() {
   local tty_probe="[[ -t 1 ]]"
-  if script -q /dev/null bash -lc "source '${ROOT_DIR}/src/lib/corral-helpers.sh'; NO_COLOR=1; ${tty_probe}; _stdout_supports_color" >/dev/null 2>&1; then
+  if script -q /dev/null bash -lc "source '${ROOT_DIR}/src/lib/corral-helpers.sh'; NO_COLOR=1; ${tty_probe}; stdout_supports_color" >/dev/null 2>&1; then
     fail 'stdout_supports_color honors NO_COLOR' 'expected NO_COLOR to disable color output'
   else
     pass 'stdout_supports_color honors NO_COLOR'
@@ -791,14 +791,14 @@ test_stdout_supports_color_disabled_by_no_color() {
 
 test_stdout_supports_color_disabled_for_dumb_term() {
   local tty_probe="[[ -t 1 ]]"
-  if script -q /dev/null env TERM=dumb bash -lc "source '${ROOT_DIR}/src/lib/corral-helpers.sh'; ${tty_probe}; _stdout_supports_color" >/dev/null 2>&1; then
+  if script -q /dev/null env TERM=dumb bash -lc "source '${ROOT_DIR}/src/lib/corral-helpers.sh'; ${tty_probe}; stdout_supports_color" >/dev/null 2>&1; then
     fail 'stdout_supports_color disables color for dumb term' 'expected TERM=dumb to disable color output'
   else
     pass 'stdout_supports_color disables color for dumb term'
   fi
 }
 
-# ── _is_mlx_platform ─────────────────────────────────────────────────────────
+# ── is_mlx_platform ──────────────────────────────────────────────────────────
 
 test_is_mlx_platform_arm64() {
   local mock_bin="${TEST_ROOT}/mock-uname-arm64-platform"
@@ -813,10 +813,10 @@ esac
 EOF
   chmod +x "${mock_bin}/uname"
 
-  if PATH="${mock_bin}:$PATH" _is_mlx_platform; then
-    pass '_is_mlx_platform returns true on Darwin/arm64'
+  if PATH="${mock_bin}:$PATH" is_mlx_platform; then
+    pass 'is_mlx_platform returns true on Darwin/arm64'
   else
-    fail '_is_mlx_platform returns true on Darwin/arm64' "expected true on Darwin/arm64"
+    fail 'is_mlx_platform returns true on Darwin/arm64' "expected true on Darwin/arm64"
   fi
 }
 
@@ -834,13 +834,13 @@ EOF
   chmod +x "${mock_bin}/uname"
 
   set +e
-  PATH="${mock_bin}:$PATH" _is_mlx_platform
+  PATH="${mock_bin}:$PATH" is_mlx_platform
   local status=$?
   set -e
   if [[ $status -ne 0 ]]; then
-    pass '_is_mlx_platform returns false on Linux/x86_64'
+    pass 'is_mlx_platform returns false on Linux/x86_64'
   else
-    fail '_is_mlx_platform returns false on Linux/x86_64' "expected false on Linux/x86_64"
+    fail 'is_mlx_platform returns false on Linux/x86_64' "expected false on Linux/x86_64"
   fi
 }
 
@@ -1319,6 +1319,19 @@ test_parse_model_command_args_rejects_unknown_argument() {
   fi
 }
 
+test_parse_model_command_args_rejects_missing_backend_value() {
+  set +e
+  _parse_model_command_args assistant --backend
+  local status=$?
+  set -e
+
+  if [[ $status -ne 0 ]] && assert_contains "$REPLY_MODEL_COMMAND_ERROR" "missing value for --backend"; then
+    pass 'parse_model_command_args rejects missing backend value'
+  else
+    fail 'parse_model_command_args rejects missing backend value' "expected missing backend value error, got status=$status error='${REPLY_MODEL_COMMAND_ERROR}'"
+  fi
+}
+
 test_resolve_model_command_context_filters_profile_for_llama_backend() {
   _create_unit_profile_fixture "coder-llama" "$(cat <<'EOF'
 model=unsloth/gemma-4-27b-it-GGUF:Q4_K_M
@@ -1378,6 +1391,20 @@ EOF
     pass 'resolve_model_command_context loads explicit mlx-scoped profile args'
   else
     fail 'resolve_model_command_context loads explicit mlx-scoped profile args' "unexpected backend='$REPLY_MODEL_COMMAND_BACKEND' model='$REPLY_MODEL_COMMAND_MODEL_SPEC' args='$args_string'"
+  fi
+}
+
+test_load_profile_strips_trailing_spaces_and_tabs() {
+  _create_unit_profile_fixture "trailing-whitespace" $'model=mlx-community/Qwen3-8B-4bit   \n--temp 0.2\t\n[mlx]\t\n--max-tokens 128  '
+
+  load_profile "trailing-whitespace" run mlx
+  local args_string="${REPLY_PROFILE_ARGS[*]}"
+
+  if assert_eq "$REPLY_PROFILE_MODEL" "mlx-community/Qwen3-8B-4bit" && \
+     assert_eq "$args_string" "--temp 0.2 --max-tokens 128"; then
+    pass 'load_profile strips trailing spaces and tabs'
+  else
+    fail 'load_profile strips trailing spaces and tabs' "unexpected model='$REPLY_PROFILE_MODEL' args='$args_string'"
   fi
 }
 
@@ -1451,11 +1478,11 @@ test_collect_template_entries_includes_builtins() {
   fi
 }
 
-# ── _completions_fish ───────────────────────────────────────────────────────
+# ── completions_fish ─────────────────────────────────────────────────────────
 
 test_completions_fish_generation() {
   local out
-  out="$(_completions_fish)"
+  out="$(completions_fish)"
 
   if ! assert_contains "$out" "for tok in \$argv"; then
     fail '_completions_fish generates fish variables literally' "expected literal \$argv in generated fish completion script"
@@ -1477,7 +1504,7 @@ test_completions_fish_generation() {
 
 test_completions_fish_profile_set_positionals() {
   local out
-  out="$(_completions_fish)"
+  out="$(completions_fish)"
 
   if ! assert_contains "$out" 'complete -c corral -n "__corral_profile_set_needs_target" -a "(__corral_templates) (__corral_cached_models)"'; then
     fail '_completions_fish completes profile set target from templates and models' 'expected profile set target completion line in generated fish script'
@@ -1494,7 +1521,7 @@ test_completions_fish_profile_set_positionals() {
 
 test_completions_zsh_profile_template_filtering() {
   local out
-  out="$(_completions_zsh)"
+  out="$(completions_zsh)"
 
   if ! assert_contains "$out" "corral ls --quiet --profiles 2>/dev/null | awk 'NF == 1 && index(\$0, \" \") == 0 { print \$0 }'"; then
     fail '_completions_zsh filters sentinel profile lines' 'expected profile filtering awk pipeline in zsh completion script'
@@ -1511,7 +1538,7 @@ test_completions_zsh_profile_template_filtering() {
 
 test_completions_zsh_profile_set_positionals() {
   local out
-  out="$(_completions_zsh)"
+  out="$(completions_zsh)"
 
   if ! assert_contains "$out" "_alternative 'templates:template:_corral_templates' 'models:model:_corral_cached_models'"; then
     fail '_completions_zsh completes profile set target from templates and models' 'expected zsh profile set target completion alternative'
@@ -1556,7 +1583,7 @@ EOF
 
 test_completions_bash_profile_set_positionals() {
   local out
-  out="$(_completions_bash)"
+  out="$(completions_bash)"
 
   if ! assert_contains "$out" "elif [[ \$COMP_CWORD -eq 4 ]]; then"; then
     fail '_completions_bash completes profile set target from templates and models' 'expected bash target position branch for profile set'
@@ -1680,9 +1707,9 @@ test_launch_tool_supports_process_matrix() {
 
 test_completions_include_launch() {
   local fish_out zsh_out bash_out
-  fish_out="$(_completions_fish)"
-  zsh_out="$(_completions_zsh)"
-  bash_out="$(_completions_bash)"
+  fish_out="$(completions_fish)"
+  zsh_out="$(completions_zsh)"
+  bash_out="$(completions_bash)"
 
   if assert_contains "$fish_out" 'launch' && \
      assert_contains "$fish_out" 'pi opencode' && \
@@ -1780,8 +1807,10 @@ else
   test_parse_model_command_args_model_before_backend
   test_parse_model_command_args_model_before_backend_with_extra_args
   test_parse_model_command_args_rejects_unknown_argument
+  test_parse_model_command_args_rejects_missing_backend_value
   test_resolve_model_command_context_filters_profile_for_llama_backend
   test_resolve_model_command_context_filters_profile_for_explicit_mlx_backend
+  test_load_profile_strips_trailing_spaces_and_tabs
   test_section_matches_common_always
   test_section_matches_command_sections
   test_section_matches_backend_sections

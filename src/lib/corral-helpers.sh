@@ -4,22 +4,27 @@
 #   - Error handling: die(), confirm_action(), confirm_destructive_action()
 #   - Shell profile permission management: shell_profile_edits_allowed()
 #   - Prerequisite checking: require_cmds()
-#   - Path normalization: _normalize_dir_path(), ensure_llama_in_path()
-#   - ANSI colour helpers: _wrap_color(), _stream_supports_color(), etc.
-#   - Tabular output: _print_tsv_table() — TSV-to-padded-columns formatter
-#   - Backend resolution: resolve_backend(), _validate_backend_flag(),
-#     _platform_default_backend(), require_mlx_platform(), _is_mlx_platform()
+#   - Path normalization: normalize_dir_path(), ensure_llama_in_path()
+#   - ANSI colour helpers: wrap_color(), _stream_supports_color(), etc.
+#   - Tabular output: print_tsv_table() — TSV-to-padded-columns formatter
+#   - Backend resolution: resolve_backend(), validate_backend_flag(),
+#     platform_default_backend(), require_mlx_platform(), is_mlx_platform()
 # shellcheck shell=bash
 
 # REPLY_* output convention:
 #   Several modules return structured data by setting REPLY_* globals instead
 #   of printing multiple lines or forcing callers through subshell parsing.
 #   Common examples include:
-#     _parse_model_spec()             -> REPLY_MODEL, REPLY_QUANT
-#     _load_profile()                 -> REPLY_PROFILE_MODEL, REPLY_PROFILE_ARGS
+#     parse_model_spec()              -> REPLY_MODEL, REPLY_QUANT
+#     load_profile()                  -> REPLY_PROFILE_MODEL, REPLY_PROFILE_ARGS
 #     _parse_model_command_args()     -> REPLY_MODEL_COMMAND_*
 #     _launch_resolve_target()        -> REPLY_LAUNCH_*
 #   Check each helper's doc comment before consuming its REPLY_* outputs.
+
+# Module boundary convention:
+#   - Public cross-module helpers do not use a leading underscore.
+#   - Private module-local helpers do use a leading underscore.
+#   Keep shared surfaces explicit so sourced-module dependencies stay readable.
 
 # Print an error message to stderr and exit non-zero.
 die() { echo "Error: $*" >&2; exit 1; }
@@ -118,10 +123,18 @@ require_cmds() {
   done
 }
 
+# Return success when an option token has a non-empty, non-option value token
+# following it.
+# Call with the current parser argument list, e.g.:
+#   option_value_present "$@" || { echo "missing value for $1" >&2; return 1; }
+option_value_present() {
+  [[ $# -ge 2 && -n "${2:-}" && "${2:-}" != --* ]]
+}
+
 # Expand a leading '~' and strip a trailing slash from a directory path.
 # Returns the normalized path on stdout.
 # Special case: preserve '/' instead of trimming it to an empty string.
-_normalize_dir_path() {
+normalize_dir_path() {
   local dir="$1"
   dir="${dir/#\~/$HOME}"
   if [[ "$dir" != "/" ]]; then
@@ -140,58 +153,17 @@ ANSI_COLOR_MAGENTA=$'\033[35m'
 ANSI_COLOR_CYAN=$'\033[36m'
 ANSI_COLOR_WHITE=$'\033[37m'
 
-# Return 0 when the target file descriptor is an interactive terminal that
-# should receive ANSI color sequences.
-_stream_supports_color() {
-  local fd="${1:-1}"
-
-  [[ -t "$fd" ]] || return 1
-  [[ -z "${NO_COLOR:-}" ]] || return 1
-  [[ "${TERM:-}" != "dumb" ]] || return 1
-}
-
-# Resolve a symbolic ANSI color name to its escape sequence.
-_ansi_color() {
-  local color_name="$1"
-
-  case "$color_name" in
-    reset) printf '%s' "$ANSI_COLOR_RESET" ;;
-    black) printf '%s' "$ANSI_COLOR_BLACK" ;;
-    red) printf '%s' "$ANSI_COLOR_RED" ;;
-    green) printf '%s' "$ANSI_COLOR_GREEN" ;;
-    yellow) printf '%s' "$ANSI_COLOR_YELLOW" ;;
-    blue) printf '%s' "$ANSI_COLOR_BLUE" ;;
-    magenta) printf '%s' "$ANSI_COLOR_MAGENTA" ;;
-    cyan) printf '%s' "$ANSI_COLOR_CYAN" ;;
-    white) printf '%s' "$ANSI_COLOR_WHITE" ;;
-    *) return 1 ;;
-  esac
-}
-
 # Print text with a named ANSI color unconditionally.
-_wrap_color() {
+wrap_color() {
   local color_name="$1"
   local text="$2"
 
   printf '%s%s%s' "$(_ansi_color "$color_name")" "$text" "$ANSI_COLOR_RESET"
 }
 
-# Print text with a named ANSI color when stdout supports it; otherwise print
-# the original text unchanged.
-_wrap_stdout_color() {
-  local color_name="$1"
-  local text="$2"
-
-  if _stdout_supports_color; then
-    _wrap_color "$color_name" "$text"
-  else
-    printf '%s' "$text"
-  fi
-}
-
 # Return 0 when stdout is an interactive terminal that should receive ANSI
 # color sequences.
-_stdout_supports_color() {
+stdout_supports_color() {
   _stream_supports_color 1
 }
 
@@ -200,13 +172,13 @@ _stdout_supports_color() {
 #   $1 = alignment string using 'l' (left) or 'r' (right) per column.
 #   $2 = header row as a single tab-separated string.
 # Data rows are read from stdin as tab-separated lines.
-_print_tsv_table() {
+print_tsv_table() {
   local alignments="$1"
   local header_tsv="$2"
   local header_color_start=""
   local header_color_end=""
 
-  if _stdout_supports_color; then
+  if stdout_supports_color; then
     header_color_start="$ANSI_COLOR_CYAN"
     header_color_end="$ANSI_COLOR_RESET"
   fi
@@ -279,7 +251,7 @@ _print_tsv_table() {
 # or values that come from other variables.
 ensure_llama_in_path() {
   local install_root="${CORRAL_INSTALL_ROOT:-$DEFAULT_INSTALL_ROOT}"
-  install_root="$(_normalize_dir_path "$install_root")"
+  install_root="$(normalize_dir_path "$install_root")"
   local current_link="${install_root}/current"
   # ":$PATH:" sandwich: wrapping PATH in colons lets the glob *":dir:"*
   # match the dir at the beginning, middle, or end without special-casing.
@@ -291,7 +263,7 @@ ensure_llama_in_path() {
 # Return "mlx" or "llama.cpp" as the platform-based default backend.
 # macOS arm64 (Apple Silicon) defaults to mlx; all other platforms default to llama.cpp.
 # shellcheck disable=SC2329
-_platform_default_backend() {
+platform_default_backend() {
   if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
     printf 'mlx'
   else
@@ -310,7 +282,7 @@ resolve_backend() {
   if [[ -n "$flag_value" ]]; then
     backend="$flag_value"
   else
-    backend="$(_platform_default_backend)"
+    backend="$(platform_default_backend)"
   fi
 
   case "$backend" in
@@ -324,7 +296,7 @@ resolve_backend() {
 # recognised backends (mlx, llama.cpp). No-ops on empty values (meaning
 # "no --backend was passed"). Used by cmd_install/update/uninstall/versions
 # where the flag is checked before any resolution or dispatch.
-_validate_backend_flag() {
+validate_backend_flag() {
   local flag_value="${1:-}"
   if [[ -n "$flag_value" ]]; then
     case "$flag_value" in
@@ -346,7 +318,7 @@ require_mlx_platform() {
 # Return 0 if the current platform supports MLX (macOS Apple Silicon), 1 otherwise.
 # Non-fatal check: unlike require_mlx_platform(), this does not exit on failure.
 # shellcheck disable=SC2329
-_is_mlx_platform() {
+is_mlx_platform() {
   [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]
 }
 
@@ -356,4 +328,53 @@ require_mlx_lm() {
   command -v mlx_lm.chat >/dev/null 2>&1 || \
     command -v mlx_lm.generate >/dev/null 2>&1 || \
     die "mlx_lm not found. Install it first: $SCRIPT_NAME install --backend mlx"
+}
+
+# Strip trailing spaces and tabs without requiring extglob to be enabled.
+_trim_trailing_whitespace() {
+  local value="$1"
+  local whitespace=$' \t'
+  value="${value%"${value##*[!"$whitespace"]}"}"
+  printf '%s' "$value"
+}
+
+# Return 0 when the target file descriptor is an interactive terminal that
+# should receive ANSI color sequences.
+_stream_supports_color() {
+  local fd="${1:-1}"
+
+  [[ -t "$fd" ]] || return 1
+  [[ -z "${NO_COLOR:-}" ]] || return 1
+  [[ "${TERM:-}" != "dumb" ]] || return 1
+}
+
+# Resolve a symbolic ANSI color name to its escape sequence.
+_ansi_color() {
+  local color_name="$1"
+
+  case "$color_name" in
+    reset) printf '%s' "$ANSI_COLOR_RESET" ;;
+    black) printf '%s' "$ANSI_COLOR_BLACK" ;;
+    red) printf '%s' "$ANSI_COLOR_RED" ;;
+    green) printf '%s' "$ANSI_COLOR_GREEN" ;;
+    yellow) printf '%s' "$ANSI_COLOR_YELLOW" ;;
+    blue) printf '%s' "$ANSI_COLOR_BLUE" ;;
+    magenta) printf '%s' "$ANSI_COLOR_MAGENTA" ;;
+    cyan) printf '%s' "$ANSI_COLOR_CYAN" ;;
+    white) printf '%s' "$ANSI_COLOR_WHITE" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Print text with a named ANSI color when stdout supports it; otherwise print
+# the original text unchanged.
+_wrap_stdout_color() {
+  local color_name="$1"
+  local text="$2"
+
+  if stdout_supports_color; then
+    wrap_color "$color_name" "$text"
+  else
+    printf '%s' "$text"
+  fi
 }

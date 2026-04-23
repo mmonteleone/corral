@@ -1,6 +1,9 @@
-# Runtime lifecycle helpers for corral.
+# Backend lifecycle and model execution helpers for corral.
 #
-# Backend installation, updating, uninstallation, and model execution. Provides:
+# Provides:
+#   - Private runtime utilities: _clear_macos_quarantine(), _detect_arch(),
+#     _github_get(), _get_release_json(), _get_latest_tag(),
+#     _delete_hf_model_cache_dirs()
 #   - llama.cpp lifecycle: _do_install(), _update_llama(), _uninstall_llama_components()
 #   - MLX lifecycle: _do_install_mlx(), _update_mlx(), _uninstall_mlx_components()
 #   - Non-fatal variants: _try_install_mlx(), _try_update_mlx() — used by the
@@ -12,16 +15,33 @@
 #   - Model serve: cmd_serve(), _serve_mlx()
 #   - Backend inference: _infer_model_backend() (GGUF-first for run/serve),
 #     _infer_pull_backend() (platform-default for pull)
-#   - Shell profile/completions: install_path(), install_completions()
-#   - Process listing: cmd_ps(), _emit_runtime_process_rows()
 #   - Maintenance: cmd_prune(), cmd_versions(), cmd_status()
 # shellcheck shell=bash
+
+cmd_install_usage() { _cmd_install_usage; }
+cmd_install() { _cmd_install "$@"; }
+cmd_update_usage() { _cmd_update_usage; }
+cmd_update() { _cmd_update "$@"; }
+cmd_status_usage() { _cmd_status_usage; }
+cmd_status() { _cmd_status "$@"; }
+cmd_uninstall_usage() { _cmd_uninstall_usage; }
+cmd_uninstall() { _cmd_uninstall "$@"; }
+cmd_versions_usage() { _cmd_versions_usage; }
+cmd_versions() { _cmd_versions "$@"; }
+cmd_prune_usage() { _cmd_prune_usage; }
+cmd_prune() { _cmd_prune "$@"; }
+cmd_pull_usage() { _cmd_pull_usage; }
+cmd_pull() { _cmd_pull "$@"; }
+cmd_run_usage() { _cmd_run_usage; }
+cmd_run() { _cmd_run "$@"; }
+cmd_serve_usage() { _cmd_serve_usage; }
+cmd_serve() { _cmd_serve "$@"; }
 
 # macOS Gatekeeper places a quarantine extended attribute on files downloaded
 # from the internet, blocking execution until the user approves them in System
 # Settings. Strip the attribute here so freshly downloaded llama.cpp binaries
 # run without a Gatekeeper popup. No-ops on non-Darwin systems.
-clear_macos_quarantine() {
+_clear_macos_quarantine() {
   local target="$1"
 
   [[ "$(uname -s)" == "Darwin" ]] || return 0
@@ -35,7 +55,7 @@ clear_macos_quarantine() {
 
 # Detect the native arch asset suffix for the current macOS/Linux machine.
 # Returns e.g. "macos-arm64", "macos-x86_64", "ubuntu-x64".
-detect_arch() {
+_detect_arch() {
   local os
   local machine
   os="$(uname -s)"
@@ -63,7 +83,7 @@ detect_arch() {
 # -f: fail on HTTP errors (non-2xx); -s: silent mode (no progress meter);
 # -S: still show errors despite -s; -L: follow redirects.
 # The Accept and X-GitHub-Api-Version headers opt into the stable v3 JSON API.
-github_get() {
+_github_get() {
   local url="$1"
   curl -fsSL \
     --connect-timeout 15 \
@@ -77,144 +97,23 @@ github_get() {
 }
 
 # Fetch the release JSON for a given tag, or the latest release if tag is empty.
-get_release_json() {
+_get_release_json() {
   local tag="$1"
   if [[ -n "$tag" ]]; then
-    github_get "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/${tag}"
+    _github_get "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/${tag}"
   else
-    github_get "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+    _github_get "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
   fi
 }
 
 # Return just the tag name string of the latest llama.cpp release.
 # 'jq -r' outputs the raw string without JSON quotes.
-get_latest_tag() {
-  get_release_json "" | jq -r '.tag_name'
+_get_latest_tag() {
+  _get_release_json "" | jq -r '.tag_name'
 }
 
-# Escape a string for safe inclusion inside a double-quoted shell config line.
-# Newlines are rejected because they would corrupt the managed config block.
-_escape_double_quoted_string() {
-  local value="$1"
 
-  if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
-    die "shell profile values cannot contain newlines"
-  fi
-
-  value="${value//\\/\\\\}"
-  value="${value//\"/\\\"}"
-  value="${value//\$/\\$}"
-  value="${value//\`/\\\`}"
-  printf '%s' "$value"
-}
-
-# Return the bash startup file corral should manage on this platform.
-_bash_startup_file() {
-  if [[ "$(uname -s)" == "Darwin" && -f "${HOME}/.bash_profile" ]]; then
-    printf '%s' "${HOME}/.bash_profile"
-  else
-    printf '%s' "${HOME}/.bashrc"
-  fi
-}
-
-_zsh_startup_file() {
-  printf '%s' "${ZDOTDIR:-$HOME}/.zshrc"
-}
-
-_zsh_completions_dir() {
-  printf '%s' "${ZDOTDIR:-$HOME}/.zfunc"
-}
-
-# Replace or append a managed block inside a shell config file.
-_upsert_managed_block() {
-  local file_path="$1"
-  local begin_marker="$2"
-  local end_marker="$3"
-  local block_body="$4"
-  local tmp_file
-  local wrote_block="false"
-  local inside_block="false"
-  local line
-
-  mkdir -p "$(dirname "$file_path")"
-  touch "$file_path"
-  tmp_file="$(mktemp)"
-
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ "$inside_block" == "true" ]]; then
-      if [[ "$line" == "$end_marker" ]]; then
-        inside_block="false"
-      fi
-      continue
-    fi
-
-    if [[ "$line" == "$begin_marker" ]]; then
-      if [[ "$wrote_block" == "false" ]]; then
-        printf '%s\n%s\n%s\n' "$begin_marker" "$block_body" "$end_marker" >> "$tmp_file"
-        wrote_block="true"
-      fi
-      inside_block="true"
-      continue
-    fi
-
-    printf '%s\n' "$line" >> "$tmp_file"
-  done < "$file_path"
-
-  if [[ "$wrote_block" == "false" ]]; then
-    [[ -s "$tmp_file" ]] && printf '\n' >> "$tmp_file"
-    printf '%s\n%s\n%s\n' "$begin_marker" "$block_body" "$end_marker" >> "$tmp_file"
-  fi
-
-  mv "$tmp_file" "$file_path"
-}
-
-# Add the llama.cpp bin directory to the user's shell profile (fish, zsh, or
-# bash) so it persists across new terminal sessions.
-install_path() {
-  local current_link="$1"
-  local profile_mode="$2"
-  local parent_shell
-  local escaped_current_link
-  parent_shell="$(basename "${SHELL:-bash}")"
-  escaped_current_link="$(_escape_double_quoted_string "$current_link")"
-
-  local begin_marker="# BEGIN corral"
-  local end_marker="# END corral"
-  # The BEGIN/END sentinel lines make the PATH addition idempotent:
-  # re-running install will not append a duplicate entry to the shell profile.
-
-  if ! shell_profile_edits_allowed "$profile_mode"; then
-    echo "Skipping shell profile edits. Add this to your PATH manually:"
-    echo "  $current_link"
-    return 0
-  fi
-
-  case "$parent_shell" in
-    fish)
-      local fish_conf="${HOME}/.config/fish/config.fish"
-      _upsert_managed_block "$fish_conf" "$begin_marker" "$end_marker" "fish_add_path \"$escaped_current_link\""
-      echo "Configured PATH in $fish_conf"
-      ;;
-    zsh)
-      local zshrc="${ZDOTDIR:-$HOME}/.zshrc"
-      _upsert_managed_block "$zshrc" "$begin_marker" "$end_marker" "export PATH=\"$escaped_current_link:\$PATH\""
-      echo "Configured PATH in $zshrc"
-      ;;
-    bash)
-      local bash_conf
-      bash_conf="$(_bash_startup_file)"
-      _upsert_managed_block "$bash_conf" "$begin_marker" "$end_marker" "export PATH=\"$escaped_current_link:\$PATH\""
-      echo "Configured PATH in $bash_conf"
-      ;;
-    *)
-      echo
-      echo "Add this to your PATH:"
-      echo "  $current_link"
-      ;;
-  esac
-}
-
-cmd_install_usage() {
+_cmd_install_usage() {
   cat <<EOF
 Usage: $SCRIPT_NAME install [--backend <mlx|llama.cpp>] [--tag <release_tag>]
                            [--path <installation_root>] [--arch <arch>]
@@ -243,12 +142,12 @@ _do_install() {
   local ARCH="$3"
   local PROFILE_MODE="$4"
 
-  INSTALL_ROOT="$(_normalize_dir_path "$INSTALL_ROOT")"
+  INSTALL_ROOT="$(normalize_dir_path "$INSTALL_ROOT")"
 
   local ASSET_NAME="llama-${TAG}-bin-${ARCH}.tar.gz"
   local RELEASE_JSON
   echo "Fetching release metadata..."
-  RELEASE_JSON="$(get_release_json "$TAG")"
+  RELEASE_JSON="$(_get_release_json "$TAG")"
 
   # When TAG is empty, the API returns the latest release JSON. Extract the
   # actual tag name from it so we can construct the correct asset filename.
@@ -334,7 +233,7 @@ _do_install() {
   local STAGED_TARGET="${STAGE_PARENT}/${VERSION_DIR_NAME}"
   mv "$EXTRACTED_TOP_DIR" "$STAGED_TARGET"
 
-  clear_macos_quarantine "$STAGED_TARGET"
+  _clear_macos_quarantine "$STAGED_TARGET"
 
   # Write the completion marker before the final move; it will become
   # MARKER_FILE once the directory lands in its permanent location.
@@ -421,77 +320,6 @@ _do_install_mlx() {
   echo "Installed mlx-lm via uv."
 }
 
-install_completions() {
-  local profile_mode="$1"
-
-  local parent_shell
-  parent_shell="$(basename "${SHELL:-bash}")"
-
-  case "$parent_shell" in
-    fish)
-      local dest_dir="${HOME}/.config/fish/completions"
-      mkdir -p "$dest_dir"
-      _completions_fish > "${dest_dir}/${SCRIPT_NAME}.fish"
-      echo "Installed fish completions -> ${dest_dir}/${SCRIPT_NAME}.fish"
-      ;;
-    zsh)
-      local dest_dir
-      local zshrc
-      local loader_begin="# BEGIN corral zsh completions"
-      local loader_end="# END corral zsh completions"
-      local escaped_dest_dir
-      local loader_body
-      dest_dir="$(_zsh_completions_dir)"
-      zshrc="$(_zsh_startup_file)"
-      escaped_dest_dir="$(_escape_double_quoted_string "$dest_dir")"
-      mkdir -p "$dest_dir"
-      _completions_zsh > "${dest_dir}/_${SCRIPT_NAME}"
-      loader_body="$(cat <<EOF
-if (( \${fpath[(Ie)"$escaped_dest_dir"]} == 0 )); then
-  fpath=("$escaped_dest_dir" \$fpath)
-fi
-if (( ! \$+functions[compdef] )); then
-  autoload -Uz compinit
-  compinit
-fi
-EOF
-)"
-      if shell_profile_edits_allowed "$profile_mode"; then
-        _upsert_managed_block "$zshrc" "$loader_begin" "$loader_end" "$loader_body"
-        echo "Configured zsh completions loader in $zshrc"
-      else
-        echo "Zsh completions installed -> ${dest_dir}/_${SCRIPT_NAME}"
-        echo "Add $dest_dir to fpath and run compinit from $zshrc to enable them."
-        return 0
-      fi
-      echo "Installed zsh completions  -> ${dest_dir}/_${SCRIPT_NAME}"
-      ;;
-    bash)
-      local dest="${HOME}/.bash_completion.d/${SCRIPT_NAME}"
-      local bash_conf
-      local loader_begin="# BEGIN corral bash completions"
-      local loader_end="# END corral bash completions"
-      local loader_body
-      mkdir -p "${HOME}/.bash_completion.d"
-      _completions_bash > "$dest"
-      bash_conf="$(_bash_startup_file)"
-      loader_body="# corral shell completions"$'\n'"for f in ~/.bash_completion.d/*; do [[ -f \"\$f\" ]] && source \"\$f\"; done"
-      if shell_profile_edits_allowed "$profile_mode"; then
-        _upsert_managed_block "$bash_conf" "$loader_begin" "$loader_end" "$loader_body"
-        echo "Configured bash completions loader in $bash_conf"
-      else
-        echo "Bash completions installed -> $dest"
-        echo "Source them manually from $bash_conf if you want shell completion support."
-        return 0
-      fi
-      echo "Installed bash completions -> $dest"
-      ;;
-    *)
-      return 0
-      ;;
-  esac
-}
-
 # Non-fatal mlx-lm install. Mirrors _do_install_mlx but warns and returns 0
 # instead of dying when prerequisites (uv) remain unavailable.
 # Used by the combined (all-backends) install path so that a missing uv does
@@ -523,7 +351,7 @@ _try_install_mlx() {
 # Install or update llama.cpp from a GitHub release.
 # Manages the argument-parsing loop common to all cmd_* functions:
 # 'while [[ $# -gt 0 ]]; do case ... shift; done'
-cmd_install() {
+_cmd_install() {
   local TAG=""
   local INSTALL_ROOT="$DEFAULT_INSTALL_ROOT"
   local PRINT_LATEST_TAG="false"
@@ -533,10 +361,26 @@ cmd_install() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --backend)           BACKEND_FLAG="${2:-}"; shift 2 ;;
-      --tag)               TAG="${2:-}"; shift 2 ;;
-      --path)              INSTALL_ROOT="${2:-}"; shift 2 ;;
-      --arch)              ARCH="${2:-}"; shift 2 ;;
+      --backend)
+        option_value_present "$@" || { echo "missing value for --backend" >&2; cmd_install_usage >&2; return 1; }
+        BACKEND_FLAG="$2"
+        shift 2
+        ;;
+      --tag)
+        option_value_present "$@" || { echo "missing value for --tag" >&2; cmd_install_usage >&2; return 1; }
+        TAG="$2"
+        shift 2
+        ;;
+      --path)
+        option_value_present "$@" || { echo "missing value for --path" >&2; cmd_install_usage >&2; return 1; }
+        INSTALL_ROOT="$2"
+        shift 2
+        ;;
+      --arch)
+        option_value_present "$@" || { echo "missing value for --arch" >&2; cmd_install_usage >&2; return 1; }
+        ARCH="$2"
+        shift 2
+        ;;
       --shell-profile)     PROFILE_MODE="always"; shift ;;
       --no-shell-profile)  PROFILE_MODE="never"; shift ;;
       --print-latest-tag)  PRINT_LATEST_TAG="true"; shift ;;
@@ -545,7 +389,7 @@ cmd_install() {
     esac
   done
 
-  _validate_backend_flag "$BACKEND_FLAG"
+  validate_backend_flag "$BACKEND_FLAG"
 
   case "${BACKEND_FLAG:-all}" in
     mlx)
@@ -562,7 +406,7 @@ cmd_install() {
     fi
     require_cmds curl jq
     local LATEST_TAG
-    LATEST_TAG="$(get_latest_tag)"
+    LATEST_TAG="$(_get_latest_tag)"
     [[ -z "$LATEST_TAG" || "$LATEST_TAG" == "null" ]] && die "failed to determine latest release tag."
     printf '%s\n' "$LATEST_TAG"
     return 0
@@ -571,7 +415,7 @@ cmd_install() {
   # --backend llama.cpp or combined: install llama.cpp.
   require_cmds curl tar mktemp mv rm mkdir touch ln find jq basename
 
-  [[ -z "$ARCH" ]] && ARCH="$(detect_arch)"
+  [[ -z "$ARCH" ]] && ARCH="$(_detect_arch)"
 
   _do_install "$TAG" "$INSTALL_ROOT" "$ARCH" "$PROFILE_MODE"
 
@@ -581,7 +425,7 @@ cmd_install() {
       ;;
     all)
       # Combined path (no --backend): also install mlx if on Apple Silicon.
-      if _is_mlx_platform; then
+      if is_mlx_platform; then
         echo
         echo "Installing MLX backend..."
         _try_install_mlx
@@ -590,7 +434,7 @@ cmd_install() {
   esac
 }
 
-cmd_update_usage() {
+_cmd_update_usage() {
   cat <<EOF
 Usage: $SCRIPT_NAME update [--backend <mlx|llama.cpp>] [--path <installation_root>] [--arch <arch>]
                           [--shell-profile | --no-shell-profile]
@@ -658,7 +502,7 @@ _update_llama() {
   local ARCH="$2"
   local PROFILE_MODE="$3"
 
-  INSTALL_ROOT="$(_normalize_dir_path "$INSTALL_ROOT")"
+  INSTALL_ROOT="$(normalize_dir_path "$INSTALL_ROOT")"
 
   local CURRENT_LINK="${INSTALL_ROOT}/current"
   local INSTALLED_TAG=""
@@ -671,7 +515,7 @@ _update_llama() {
 
   echo "Checking for latest llama.cpp release..."
   local LATEST_TAG
-  LATEST_TAG="$(get_latest_tag)"
+  LATEST_TAG="$(_get_latest_tag)"
   [[ -z "$LATEST_TAG" || "$LATEST_TAG" == "null" ]] && die "failed to determine latest release tag."
 
   if [[ "$INSTALLED_TAG" == "$LATEST_TAG" ]]; then
@@ -689,7 +533,7 @@ _update_llama() {
   _do_install "$LATEST_TAG" "$INSTALL_ROOT" "$ARCH" "$PROFILE_MODE"
 }
 
-cmd_update() {
+_cmd_update() {
   local INSTALL_ROOT="$DEFAULT_INSTALL_ROOT"
   local ARCH=""
   local PROFILE_MODE="ask"
@@ -697,9 +541,21 @@ cmd_update() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --backend) BACKEND_FLAG="${2:-}"; shift 2 ;;
-      --path)    INSTALL_ROOT="${2:-}"; shift 2 ;;
-      --arch)    ARCH="${2:-}"; shift 2 ;;
+      --backend)
+        option_value_present "$@" || { echo "missing value for --backend" >&2; cmd_update_usage >&2; return 1; }
+        BACKEND_FLAG="$2"
+        shift 2
+        ;;
+      --path)
+        option_value_present "$@" || { echo "missing value for --path" >&2; cmd_update_usage >&2; return 1; }
+        INSTALL_ROOT="$2"
+        shift 2
+        ;;
+      --arch)
+        option_value_present "$@" || { echo "missing value for --arch" >&2; cmd_update_usage >&2; return 1; }
+        ARCH="$2"
+        shift 2
+        ;;
       --shell-profile)    PROFILE_MODE="always"; shift ;;
       --no-shell-profile) PROFILE_MODE="never"; shift ;;
       -h|--help) cmd_update_usage; return 0 ;;
@@ -707,7 +563,7 @@ cmd_update() {
     esac
   done
 
-  _validate_backend_flag "$BACKEND_FLAG"
+  validate_backend_flag "$BACKEND_FLAG"
 
   case "${BACKEND_FLAG:-all}" in
     mlx)
@@ -717,7 +573,7 @@ cmd_update() {
   esac
 
   require_cmds curl jq
-  [[ -z "$ARCH" ]] && ARCH="$(detect_arch)"
+  [[ -z "$ARCH" ]] && ARCH="$(_detect_arch)"
 
   case "${BACKEND_FLAG:-all}" in
     llama.cpp)
@@ -726,7 +582,7 @@ cmd_update() {
     all)
       # Combined path (no --backend): update llama.cpp and mlx if on Apple Silicon.
       _update_llama "$INSTALL_ROOT" "$ARCH" "$PROFILE_MODE"
-      if _is_mlx_platform; then
+      if is_mlx_platform; then
         echo
         _try_update_mlx
       fi
@@ -734,7 +590,7 @@ cmd_update() {
   esac
 }
 
-cmd_status_usage() {
+_cmd_status_usage() {
   cat <<EOF
 Usage: $SCRIPT_NAME status [--backend <mlx|llama.cpp>] [--path <installation_root>] [--check-update]
 
@@ -772,22 +628,30 @@ _mlx_lm_version() {
   fi
 }
 
-cmd_status() {
+_cmd_status() {
   local INSTALL_ROOT="$DEFAULT_INSTALL_ROOT"
   local CHECK_UPDATE="false"
   local BACKEND_FLAG=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --path)          INSTALL_ROOT="${2:-}"; shift 2 ;;
+      --path)
+        option_value_present "$@" || { echo "missing value for --path" >&2; cmd_status_usage >&2; return 1; }
+        INSTALL_ROOT="$2"
+        shift 2
+        ;;
       --check-update)  CHECK_UPDATE="true"; shift ;;
-      --backend)       BACKEND_FLAG="${2:-}"; shift 2 ;;
+      --backend)
+        option_value_present "$@" || { echo "missing value for --backend" >&2; cmd_status_usage >&2; return 1; }
+        BACKEND_FLAG="$2"
+        shift 2
+        ;;
       -h|--help)       cmd_status_usage; return 0 ;;
       *)               echo "Unknown argument: $1" >&2; cmd_status_usage >&2; return 1 ;;
     esac
   done
 
-  _validate_backend_flag "$BACKEND_FLAG"
+  validate_backend_flag "$BACKEND_FLAG"
 
   echo "Platform  : $(uname -s)/$(uname -m)"
 
@@ -808,7 +672,7 @@ cmd_status() {
       echo
       _status_llama "$INSTALL_ROOT" "$CHECK_UPDATE"
 
-      if _is_mlx_platform; then
+      if is_mlx_platform; then
         echo
         _status_mlx
       fi
@@ -821,7 +685,7 @@ _status_llama() {
   local INSTALL_ROOT="$1"
   local CHECK_UPDATE="$2"
 
-  INSTALL_ROOT="$(_normalize_dir_path "$INSTALL_ROOT")"
+  INSTALL_ROOT="$(normalize_dir_path "$INSTALL_ROOT")"
 
   local CURRENT_LINK="${INSTALL_ROOT}/current"
 
@@ -842,7 +706,7 @@ _status_llama() {
     require_cmds curl jq
     echo -n "Latest    : "
     local LATEST_TAG
-    LATEST_TAG="$(get_latest_tag)"
+    LATEST_TAG="$(_get_latest_tag)"
     if [[ -z "$LATEST_TAG" || "$LATEST_TAG" == "null" ]]; then
       echo "(could not fetch)"
     elif [[ "$LATEST_TAG" == "$INSTALLED_TAG" ]]; then
@@ -864,7 +728,7 @@ _status_mlx() {
   fi
 }
 
-cmd_uninstall_usage() {
+_cmd_uninstall_usage() {
   cat <<EOF
 Usage: $SCRIPT_NAME uninstall [--backend <mlx|llama.cpp>] [--path <installation_root>] [--delete-hf-cache] [--self] [--force]
 
@@ -883,7 +747,7 @@ For mlx, removes mlx-lm (via uv when available).
 EOF
 }
 
-delete_hf_model_cache_dirs() {
+_delete_hf_model_cache_dirs() {
   if [[ ! -d "$HF_HUB_DIR" ]]; then
     echo "No HuggingFace model cache found at: $HF_HUB_DIR"
     return 0
@@ -936,7 +800,7 @@ _uninstall_llama_components() {
   local INSTALL_ROOT="$1"
   local FORCE="$2"
 
-  INSTALL_ROOT="$(_normalize_dir_path "$INSTALL_ROOT")"
+  INSTALL_ROOT="$(normalize_dir_path "$INSTALL_ROOT")"
 
   if [[ -d "$INSTALL_ROOT" ]]; then
     confirm_destructive_action "removing the llama.cpp installation at ${INSTALL_ROOT}" "$FORCE" || return 1
@@ -956,7 +820,7 @@ _uninstall_shared_options() {
 
   if [[ "$DELETE_HF_CACHE" == "true" ]]; then
     confirm_destructive_action "removing cached HuggingFace model directories under ${HF_HUB_DIR}" "$FORCE" || return 1
-    delete_hf_model_cache_dirs
+    _delete_hf_model_cache_dirs
   fi
 
   if [[ "$DELETE_SELF" == "true" ]]; then
@@ -975,7 +839,7 @@ _uninstall_shared_options() {
   fi
 }
 
-cmd_uninstall() {
+_cmd_uninstall() {
   local INSTALL_ROOT="$DEFAULT_INSTALL_ROOT"
   local DELETE_HF_CACHE="false"
   local DELETE_SELF="false"
@@ -984,8 +848,16 @@ cmd_uninstall() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --backend)          BACKEND_FLAG="${2:-}"; shift 2 ;;
-      --path)             INSTALL_ROOT="${2:-}"; shift 2 ;;
+      --backend)
+        option_value_present "$@" || { echo "missing value for --backend" >&2; cmd_uninstall_usage >&2; return 1; }
+        BACKEND_FLAG="$2"
+        shift 2
+        ;;
+      --path)
+        option_value_present "$@" || { echo "missing value for --path" >&2; cmd_uninstall_usage >&2; return 1; }
+        INSTALL_ROOT="$2"
+        shift 2
+        ;;
       --delete-hf-cache)  DELETE_HF_CACHE="true"; shift ;;
       --models)
         echo "Warning: --models is deprecated; use --delete-hf-cache instead." >&2
@@ -999,7 +871,7 @@ cmd_uninstall() {
     esac
   done
 
-  _validate_backend_flag "$BACKEND_FLAG"
+  validate_backend_flag "$BACKEND_FLAG"
 
   case "${BACKEND_FLAG:-all}" in
     mlx)
@@ -1010,7 +882,7 @@ cmd_uninstall() {
       ;;
     all)
       # Combined path (no --backend): uninstall all supported backends.
-      if _is_mlx_platform; then
+      if is_mlx_platform; then
         echo "--- MLX backend ---"
         _uninstall_mlx_components "$FORCE" || return 1
         echo
@@ -1025,7 +897,7 @@ cmd_uninstall() {
   _uninstall_shared_options "$DELETE_HF_CACHE" "$DELETE_SELF" "$FORCE"
 }
 
-cmd_versions_usage() {
+_cmd_versions_usage() {
   cat <<EOF
 Usage: $SCRIPT_NAME versions [--backend <mlx|llama.cpp>] [--path <installation_root>]
 
@@ -1047,7 +919,7 @@ EOF
 # shellcheck disable=SC2329
 _emit_llama_version_rows() {
   local root="$1"
-  root="$(_normalize_dir_path "$root")"
+  root="$(normalize_dir_path "$root")"
 
   if [[ ! -d "$root" ]]; then
     printf '%s\t%s\t%s\n' 'llama.cpp' '(no installation)' '-'
@@ -1098,42 +970,50 @@ _emit_mlx_version_rows() {
   fi
 }
 
-cmd_versions() {
+_cmd_versions() {
   local INSTALL_ROOT="$DEFAULT_INSTALL_ROOT"
   local BACKEND_FLAG=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --backend) BACKEND_FLAG="${2:-}"; shift 2 ;;
-      --path)    INSTALL_ROOT="${2:-}"; shift 2 ;;
+      --backend)
+        option_value_present "$@" || { echo "missing value for --backend" >&2; cmd_versions_usage >&2; return 1; }
+        BACKEND_FLAG="$2"
+        shift 2
+        ;;
+      --path)
+        option_value_present "$@" || { echo "missing value for --path" >&2; cmd_versions_usage >&2; return 1; }
+        INSTALL_ROOT="$2"
+        shift 2
+        ;;
       -h|--help) cmd_versions_usage; return 0 ;;
       *)         echo "Unknown argument: $1" >&2; cmd_versions_usage >&2; return 1 ;;
     esac
   done
 
-  _validate_backend_flag "$BACKEND_FLAG"
+  validate_backend_flag "$BACKEND_FLAG"
 
   case "${BACKEND_FLAG:-all}" in
     mlx)
-      _emit_mlx_version_rows | _print_tsv_table 'lll' $'TYPE\tVERSION\tSTATUS'
+      _emit_mlx_version_rows | print_tsv_table 'lll' $'TYPE\tVERSION\tSTATUS'
       ;;
     llama.cpp)
-      _emit_llama_version_rows "$INSTALL_ROOT" | _print_tsv_table 'lll' $'TYPE\tVERSION\tSTATUS'
+      _emit_llama_version_rows "$INSTALL_ROOT" | print_tsv_table 'lll' $'TYPE\tVERSION\tSTATUS'
       ;;
     all)
       # Combined path (no --backend): show all installed backends.
       {
         _emit_llama_version_rows "$INSTALL_ROOT"
 
-        if _is_mlx_platform; then
+        if is_mlx_platform; then
           _emit_mlx_version_rows
         fi
-      } | _print_tsv_table 'lll' $'TYPE\tVERSION\tSTATUS'
+      } | print_tsv_table 'lll' $'TYPE\tVERSION\tSTATUS'
       ;;
   esac
 }
 
-cmd_prune_usage() {
+_cmd_prune_usage() {
   cat <<EOF
 Usage: $SCRIPT_NAME prune [--backend <mlx|llama.cpp>] [--path <installation_root>] [--force]
 
@@ -1148,22 +1028,30 @@ Options:
 EOF
 }
 
-cmd_prune() {
+_cmd_prune() {
   local INSTALL_ROOT="$DEFAULT_INSTALL_ROOT"
   local FORCE="false"
   local BACKEND_FLAG=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --backend) BACKEND_FLAG="${2:-}"; shift 2 ;;
-      --path)    INSTALL_ROOT="${2:-}"; shift 2 ;;
+      --backend)
+        option_value_present "$@" || { echo "missing value for --backend" >&2; cmd_prune_usage >&2; return 1; }
+        BACKEND_FLAG="$2"
+        shift 2
+        ;;
+      --path)
+        option_value_present "$@" || { echo "missing value for --path" >&2; cmd_prune_usage >&2; return 1; }
+        INSTALL_ROOT="$2"
+        shift 2
+        ;;
       --force)   FORCE="true"; shift ;;
       -h|--help) cmd_prune_usage; return 0 ;;
       *)         echo "Unknown argument: $1" >&2; cmd_prune_usage >&2; return 1 ;;
     esac
   done
 
-  _validate_backend_flag "$BACKEND_FLAG"
+  validate_backend_flag "$BACKEND_FLAG"
 
   local BACKEND="llama.cpp"
   if [[ -n "$BACKEND_FLAG" ]]; then
@@ -1175,7 +1063,7 @@ cmd_prune() {
     return 0
   fi
 
-  INSTALL_ROOT="$(_normalize_dir_path "$INSTALL_ROOT")"
+  INSTALL_ROOT="$(normalize_dir_path "$INSTALL_ROOT")"
 
   local current_link="${INSTALL_ROOT}/current"
   local current_dir=""
@@ -1222,7 +1110,7 @@ cmd_prune() {
 
 # ── pull ──────────────────────────────────────────────────────────────────────
 
-cmd_pull_usage() {
+_cmd_pull_usage() {
   cat <<EOF
 Usage: $SCRIPT_NAME pull [--backend <mlx|llama.cpp>] <MODEL_NAME[:QUANT]>
 
@@ -1237,7 +1125,7 @@ Pass --backend to override when auto-detection is wrong.
 EOF
 }
 
-cmd_pull() {
+_cmd_pull() {
   if [[ $# -eq 0 ]]; then
     cmd_pull_usage
     return 1
@@ -1249,7 +1137,8 @@ cmd_pull() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --backend)
-        if [[ $# -lt 2 ]]; then
+        if ! option_value_present "$@"; then
+          echo "missing value for --backend" >&2
           cmd_pull_usage >&2
           return 1
         fi
@@ -1290,7 +1179,7 @@ cmd_pull() {
     return 0
   fi
 
-  _parse_model_spec "$model_spec"
+  parse_model_spec "$model_spec"
   local model_name="$REPLY_MODEL"
   local quant="$REPLY_QUANT"
   local cache_dir
@@ -1412,7 +1301,7 @@ _infer_pull_backend() {
     printf '%s' "$metadata_backend"
     return 0
   fi
-  _platform_default_backend
+  platform_default_backend
 }
 
 # Pull a model via mlx_lm.generate (MLX backend).
@@ -1474,7 +1363,7 @@ _infer_model_backend() {
     # Check for GGUF files in the local HF cache.
     local cache_dir
     cache_dir="$(model_name_to_cache_dir "$model_name" 2>/dev/null || true)"
-    if [[ -n "$cache_dir" && -d "$cache_dir" ]] && _cache_dir_has_gguf "$cache_dir"; then
+    if [[ -n "$cache_dir" && -d "$cache_dir" ]] && cache_dir_has_gguf "$cache_dir"; then
       printf 'llama.cpp'
       return 0
     fi
@@ -1493,7 +1382,7 @@ _infer_model_backend() {
 
   # No local evidence; fall back to the platform default.
   # On macOS Apple Silicon this is mlx; everywhere else it is llama.cpp.
-  _platform_default_backend
+  platform_default_backend
 }
 
 # Parse the shared argument shape used by 'run' and 'serve'.
@@ -1515,12 +1404,12 @@ _parse_model_command_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --backend)
-        if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == "--" ]]; then
+        if ! option_value_present "$@"; then
           REPLY_MODEL_COMMAND_ERROR="missing value for --backend"
           return 1
         fi
         REPLY_MODEL_COMMAND_BACKEND_FLAG="$2"
-        _validate_backend_flag "$REPLY_MODEL_COMMAND_BACKEND_FLAG"
+        validate_backend_flag "$REPLY_MODEL_COMMAND_BACKEND_FLAG"
         shift 2
         ;;
       --)
@@ -1574,7 +1463,7 @@ _resolve_model_command_context() {
   # Treat it as a saved profile name and load its model + flags in two passes.
   if [[ "$model_or_profile" != */* ]]; then
     profile_name="$model_or_profile"
-    _load_profile "$profile_name" "$mode"
+    load_profile "$profile_name" "$mode"
     REPLY_MODEL_COMMAND_MODEL_SPEC="$REPLY_PROFILE_MODEL"
   fi
 
@@ -1585,13 +1474,13 @@ _resolve_model_command_context() {
   fi
 
   if [[ -n "$profile_name" ]]; then
-    _load_profile "$profile_name" "$mode" "$REPLY_MODEL_COMMAND_BACKEND"
+    load_profile "$profile_name" "$mode" "$REPLY_MODEL_COMMAND_BACKEND"
     REPLY_MODEL_COMMAND_MODEL_SPEC="$REPLY_PROFILE_MODEL"
     REPLY_MODEL_COMMAND_PROFILE_ARGS=("${REPLY_PROFILE_ARGS[@]+"${REPLY_PROFILE_ARGS[@]}"}")
   fi
 }
 
-cmd_run_usage() {
+_cmd_run_usage() {
   cat <<EOF
 Usage: $SCRIPT_NAME run [--backend <mlx|llama.cpp>] <MODEL_NAME|PROFILE> [-- <extra args...>]
 
@@ -1617,7 +1506,7 @@ Example:
 EOF
 }
 
-cmd_run() {
+_cmd_run() {
   if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
     cmd_run_usage
     [[ $# -eq 0 ]] && return 1 || return 0
@@ -1661,7 +1550,7 @@ cmd_run() {
 
 # ── serve ─────────────────────────────────────────────────────────────────────
 
-cmd_serve_usage() {
+_cmd_serve_usage() {
   cat <<EOF
 Usage: $SCRIPT_NAME serve [--backend <mlx|llama.cpp>] <MODEL_NAME|PROFILE> [-- <extra args...>]
 
@@ -1687,7 +1576,7 @@ Example:
 EOF
 }
 
-cmd_serve() {
+_cmd_serve() {
   if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
     cmd_serve_usage
     [[ $# -eq 0 ]] && return 1 || return 0
@@ -1725,72 +1614,6 @@ cmd_serve() {
     "${hf_args[@]+"${hf_args[@]}"}" \
     "${profile_args[@]+"${profile_args[@]}"}" \
     "${extra_args[@]+"${extra_args[@]}"}"
-}
-
-# ── ps ────────────────────────────────────────────────────────────────────────
-
-_emit_runtime_process_rows() {
-  # Try GNU/Linux ps format first (-eo); fall back to BSD/macOS (-ax -o).
-  # Detect target processes from the command name or early executable/script
-  # tokens in args. Limiting fallback to the first command-like fields avoids
-  # self-matching awk script text that may mention llama/port flags.
-  { ps -eo pid=,comm=,args= -ww 2>/dev/null || ps -ax -o pid=,comm=,args= -ww 2>/dev/null; } | awk '
-    {
-      pid = $1
-      proc = $2
-      matched = ""
-
-      if (proc ~ /^llama-(cli|server)$/ || proc == "mlx_lm.server" || proc == "mlx_lm.chat") {
-        matched = proc
-      } else {
-        for (i = 3; i <= NF && i <= 4; i++) {
-          if ($i ~ /^-/) {
-            break
-          }
-
-          token = $i
-          sub(/^.*\//, "", token)
-
-          if (token ~ /^llama-(cli|server)$/ || token == "mlx_lm.server" || token == "mlx_lm.chat") {
-            matched = token
-            break
-          }
-        }
-      }
-
-      if (matched == "") {
-        next
-      }
-
-      proc = matched
-
-      model = "(unknown)"
-      port = "-"
-
-      for (i = 3; i <= NF; i++) {
-        if (($i == "-hf" || $i == "--hf" || $i == "--model") && i < NF) {
-          model = $(i + 1)
-        } else if (($i == "-p" || $i == "--port") && i < NF) {
-          port = $(i + 1)
-        } else if ($i ~ /^--port=/) {
-          split($i, parts, "=")
-          port = parts[2]
-        } else if ($i ~ /^-p[0-9]+$/) {
-          port = substr($i, 3)
-        }
-      }
-
-      sub(/^.*\//, "", proc)
-      if (proc != "llama-server" && proc != "mlx_lm.server") {
-        port = "-"
-      } else if (port == "-") {
-        # llama-server and mlx_lm.server default to port 8080 when --port is not explicitly given.
-        port = "8080"
-      }
-
-      printf "%s\t%s\t%s\t%s\n", pid, proc, port, model
-    }
-  '
 }
 
 # Run a model via mlx_lm.chat (MLX backend).
@@ -1837,16 +1660,4 @@ _serve_mlx() {
   fi
 
   exec mlx_lm.server --model "$model_spec" "${extra_args[@]+"${extra_args[@]}"}"
-}
-
-cmd_ps() {
-  local ps_output
-  ps_output="$(_emit_runtime_process_rows)"
-
-  if [[ -z "$ps_output" ]]; then
-    echo "No llama-cli, llama-server, mlx_lm.chat, or mlx_lm.server processes running."
-    return 0
-  fi
-
-  _print_tsv_table 'llll' $'PID\tPROCESS\tPORT\tMODEL' <<< "$ps_output"
 }

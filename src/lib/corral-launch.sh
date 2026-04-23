@@ -16,17 +16,103 @@
 # Config write safety:
 #   _write_text_file_with_backup() — atomic write with .bak.TIMESTAMP backup.
 #
-# Launch templates live in src/launch-templates/*.tmpl and are inlined by
+# Launch templates live in src/launch/*.tmpl and are inlined by
 # tools/build.sh between BEGIN/END_BUILTIN_LAUNCH_TEMPLATES markers.
 # shellcheck shell=bash
 
 CORRAL_LAUNCH_PROVIDER_ID="corral-launch"
 
+cmd_launch_usage() {
+  cat <<EOF
+Usage: $SCRIPT_NAME launch [--port <port>] <pi|opencode> [-- <extra args...>]
+
+Arguments:
+  pi|opencode  Supported coding harness to configure and launch.
+
+Options:
+  --port <port>      Use a specific running corral server when multiple are active.
+
+Corral inspects the selected running server, updates the harness configuration
+to point at that server's OpenAI-compatible endpoint and model, backs up the
+existing config next to the original when it changes, and then launches the
+harness.
+
+Notes:
+  - pi and opencode work with llama-server and mlx_lm.server.
+
+Examples:
+  $SCRIPT_NAME launch pi
+  $SCRIPT_NAME launch --port 8082 opencode
+EOF
+}
+
+cmd_launch() {
+  if [[ $# -eq 0 ]]; then
+    cmd_launch_usage
+    return 1
+  fi
+
+  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    cmd_launch_usage
+    return 0
+  fi
+
+  if ! _parse_launch_args "$@"; then
+    echo "$REPLY_LAUNCH_ERROR" >&2
+    cmd_launch_usage >&2
+    return 1
+  fi
+
+  if [[ "$REPLY_LAUNCH_SHOW_HELP" == "true" ]]; then
+    cmd_launch_usage
+    return 0
+  fi
+
+  local requested_port="$REPLY_LAUNCH_REQUESTED_PORT"
+  local tool="$REPLY_LAUNCH_TOOL"
+  local extra_args=("${REPLY_LAUNCH_EXTRA_ARGS[@]+"${REPLY_LAUNCH_EXTRA_ARGS[@]}"}")
+
+  _validate_launch_tool "$tool"
+
+  require_cmds date "$tool"
+  CORRAL_LAUNCH_RUN_TIMESTAMP="$(_launch_timestamp)"
+
+  if ! _launch_resolve_target "$tool" "$requested_port"; then
+    return 1
+  fi
+
+  printf 'Using corral server on port %s (%s, model %s)\n' \
+    "$REPLY_LAUNCH_PORT" "$REPLY_LAUNCH_PROCESS" "$REPLY_LAUNCH_MODEL"
+
+  case "$tool" in
+    pi)
+      require_cmds jq
+      _configure_pi_launch "$REPLY_LAUNCH_ENDPOINT" "$REPLY_LAUNCH_MODEL" "$CORRAL_LAUNCH_PROVIDER_ID"
+      ;;
+    opencode)
+      require_cmds jq
+      _configure_opencode_launch "$REPLY_LAUNCH_ENDPOINT" "$REPLY_LAUNCH_MODEL" "$CORRAL_LAUNCH_PROVIDER_ID"
+      ;;
+  esac
+
+  printf 'Launching %s against %s (model: %s)\n' \
+    "$tool" "$REPLY_LAUNCH_ENDPOINT" "$REPLY_LAUNCH_MODEL"
+
+  case "$tool" in
+    pi)
+      exec pi "${extra_args[@]+"${extra_args[@]}"}"
+      ;;
+    opencode)
+      exec opencode "${extra_args[@]+"${extra_args[@]}"}"
+      ;;
+  esac
+}
+
 _get_builtin_launch_template_content() {
   local name="$1"
   # BEGIN_BUILTIN_LAUNCH_TEMPLATES
   local template_dir
-  template_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../launch-templates"
+  template_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../launch"
   if [[ -f "${template_dir}/${name}.tmpl" ]]; then
     cat "${template_dir}/${name}.tmpl"
     return 0
@@ -347,7 +433,7 @@ _launch_resolve_target() {
   local requested_port="${2:-}"
   local rows eligible_rows=""
 
-  rows="$(_emit_runtime_process_rows)"
+  rows="$(emit_runtime_process_rows)"
 
   while IFS=$'\t' read -r pid process_name port model; do
     [[ -n "$pid" ]] || continue
@@ -368,7 +454,7 @@ _launch_resolve_target() {
   row_count="$(printf '%s' "$eligible_rows" | awk 'NF { count += 1 } END { print count + 0 }')"
   if [[ "$row_count" -gt 1 ]]; then
     printf 'Multiple compatible corral servers are running; choose one with --port:\n' >&2
-    _print_tsv_table 'llll' $'PID\tPROCESS\tPORT\tMODEL' <<< "$eligible_rows" >&2
+    print_tsv_table 'llll' $'PID\tPROCESS\tPORT\tMODEL' <<< "$eligible_rows" >&2
     return 1
   fi
 
@@ -425,30 +511,6 @@ _configure_opencode_launch() {
   _report_file_update "$config_path"
 }
 
-cmd_launch_usage() {
-  cat <<EOF
-Usage: $SCRIPT_NAME launch [--port <port>] <pi|opencode> [-- <extra args...>]
-
-Arguments:
-  pi|opencode  Supported coding harness to configure and launch.
-
-Options:
-  --port <port>      Use a specific running corral server when multiple are active.
-
-Corral inspects the selected running server, updates the harness configuration
-to point at that server's OpenAI-compatible endpoint and model, backs up the
-existing config next to the original when it changes, and then launches the
-harness.
-
-Notes:
-  - pi and opencode work with llama-server and mlx_lm.server.
-
-Examples:
-  $SCRIPT_NAME launch pi
-  $SCRIPT_NAME launch --port 8082 opencode
-EOF
-}
-
 # Parse arguments for cmd_launch.
 #
 # Sets:
@@ -467,7 +529,7 @@ _parse_launch_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --port)
-        [[ $# -ge 2 && -n "${2:-}" ]] || {
+        option_value_present "$@" || {
           REPLY_LAUNCH_ERROR="missing value for --port"
           return 1
         }
@@ -512,67 +574,5 @@ _validate_launch_tool() {
   case "$1" in
     pi|opencode) ;;
     *) die "unsupported launch target '${1}'. Expected one of: pi, opencode" ;;
-  esac
-}
-
-cmd_launch() {
-  if [[ $# -eq 0 ]]; then
-    cmd_launch_usage
-    return 1
-  fi
-
-  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-    cmd_launch_usage
-    return 0
-  fi
-
-  if ! _parse_launch_args "$@"; then
-    echo "$REPLY_LAUNCH_ERROR" >&2
-    cmd_launch_usage >&2
-    return 1
-  fi
-
-  if [[ "$REPLY_LAUNCH_SHOW_HELP" == "true" ]]; then
-    cmd_launch_usage
-    return 0
-  fi
-
-  local requested_port="$REPLY_LAUNCH_REQUESTED_PORT"
-  local tool="$REPLY_LAUNCH_TOOL"
-  local extra_args=("${REPLY_LAUNCH_EXTRA_ARGS[@]+"${REPLY_LAUNCH_EXTRA_ARGS[@]}"}")
-
-  _validate_launch_tool "$tool"
-
-  require_cmds date "$tool"
-  CORRAL_LAUNCH_RUN_TIMESTAMP="$(_launch_timestamp)"
-
-  if ! _launch_resolve_target "$tool" "$requested_port"; then
-    return 1
-  fi
-
-  printf 'Using corral server on port %s (%s, model %s)\n' \
-    "$REPLY_LAUNCH_PORT" "$REPLY_LAUNCH_PROCESS" "$REPLY_LAUNCH_MODEL"
-
-  case "$tool" in
-    pi)
-      require_cmds jq
-      _configure_pi_launch "$REPLY_LAUNCH_ENDPOINT" "$REPLY_LAUNCH_MODEL" "$CORRAL_LAUNCH_PROVIDER_ID"
-      ;;
-    opencode)
-      require_cmds jq
-      _configure_opencode_launch "$REPLY_LAUNCH_ENDPOINT" "$REPLY_LAUNCH_MODEL" "$CORRAL_LAUNCH_PROVIDER_ID"
-      ;;
-  esac
-
-  printf 'Launching %s against %s (model: %s)\n' \
-    "$tool" "$REPLY_LAUNCH_ENDPOINT" "$REPLY_LAUNCH_MODEL"
-
-  case "$tool" in
-    pi)
-      exec pi "${extra_args[@]+"${extra_args[@]}"}"
-      ;;
-    opencode)
-      exec opencode "${extra_args[@]+"${extra_args[@]}"}"
-      ;;
   esac
 }
