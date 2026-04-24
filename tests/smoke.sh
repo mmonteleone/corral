@@ -1855,7 +1855,7 @@ test_template_backend_sections_inherited_by_profile() {
     fail 'template backend sections inherited by profile' "expected [llama.cpp] section from code template, got: $profile_content"
     return
   fi
-  if ! assert_contains "$profile_content" '--flash-attn on'; then
+  if ! assert_contains "$profile_content" '-fa on'; then
     fail 'template backend sections inherited by profile' "expected llama.cpp flag from code template, got: $profile_content"
     return
   fi
@@ -4451,11 +4451,11 @@ test_profile_set_builtin_with_model() {
     fail 'profile set from builtin with model' "expected model line, got: $content"
     return
   fi
-  if ! assert_contains "$content" "--temp 0.2"; then
+  if ! assert_contains "$content" "--temp 0.4"; then
     fail 'profile set from builtin with model' "expected code template flag --temp, got: $content"
     return
   fi
-  if ! assert_contains "$content" "-ngl 999"; then
+  if ! assert_contains "$content" "-ngl all"; then
     fail 'profile set from builtin with model' "expected code template flag -ngl, got: $content"
     return
   fi
@@ -4551,7 +4551,7 @@ test_profile_set_template_overwrites_existing() {
     fail 'profile set template overwrites existing' "expected updated model in profile, got: $out"
     return
   fi
-  if ! assert_contains "$out" '--temp 0.2'; then
+  if ! assert_contains "$out" '--temp 0.4'; then
     fail 'profile set template overwrites existing' "expected template flags in profile, got: $out"
     return
   fi
@@ -4595,12 +4595,12 @@ test_template_show_builtin() {
 
   local out
   out="$(cat "$stdout_file")"
-  if ! assert_contains "$out" "--temp 0.2"; then
-    fail 'template show builtin' "expected '--temp 0.2' in code template, got: $out"
+  if ! assert_contains "$out" "--temp 0.4"; then
+    fail 'template show builtin' "expected '--temp 0.4' in code template, got: $out"
     return
   fi
-  if ! assert_contains "$out" "-ngl 999"; then
-    fail 'template show builtin' "expected '-ngl 999' in code template, got: $out"
+  if ! assert_contains "$out" "-ngl all"; then
+    fail 'template show builtin' "expected '-ngl all' in code template, got: $out"
     return
   fi
 
