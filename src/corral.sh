@@ -66,8 +66,14 @@ source "${SCRIPT_DIR}/lib/corral-helpers.sh"
 source "${SCRIPT_DIR}/lib/corral-cache.sh"
 # shellcheck source=src/lib/corral-profiles.sh
 source "${SCRIPT_DIR}/lib/corral-profiles.sh"
+# shellcheck source=src/lib/corral-shell.sh
+source "${SCRIPT_DIR}/lib/corral-shell.sh"
 # shellcheck source=src/lib/corral-runtime.sh
 source "${SCRIPT_DIR}/lib/corral-runtime.sh"
+# shellcheck source=src/lib/corral-processes.sh
+source "${SCRIPT_DIR}/lib/corral-processes.sh"
+# shellcheck source=src/lib/corral-inventory.sh
+source "${SCRIPT_DIR}/lib/corral-inventory.sh"
 # shellcheck source=src/lib/corral-launch.sh
 source "${SCRIPT_DIR}/lib/corral-launch.sh"
 # shellcheck source=src/lib/corral-search.sh

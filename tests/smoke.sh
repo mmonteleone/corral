@@ -428,7 +428,7 @@ test_generated_standalone_script() {
     return
   fi
 
-  if grep -q 'template_dir="$(cd "$(dirname "${BASH_SOURCE\[0\]}")" && pwd)/../launch-templates"' "$generated_script"; then
+  if grep -q 'template_dir="$(cd "$(dirname "${BASH_SOURCE\[0\]}")" && pwd)/../launch"' "$generated_script"; then
     fail 'generated standalone script inlines launch templates' 'expected launch template loader to be inlined in the standalone script'
     return
   fi
@@ -472,6 +472,7 @@ setup_test_env() {
   unset CORRAL_TEMPLATES_DIR
   unset XDG_CONFIG_HOME
   unset ZDOTDIR
+  unset NO_COLOR
 
   mkdir -p "$HOME" "$CORRAL_TEST_FIXTURES_DIR" "$CORRAL_TEST_STATE_DIR" "$CORRAL_TEST_LOG_DIR" "${TEST_DIR}/bin"
   write_mock_curl "${TEST_DIR}/bin/curl"
@@ -510,6 +511,13 @@ test_argument_parsing_errors() {
     pass 'run argument validation'
   else
     fail 'run argument validation' "expected run to reject arguments before --"
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" status --backend
+  if [[ $RUN_STATUS -ne 0 ]] && assert_contains "$(cat "$stderr_file")" 'missing value for --backend'; then
+    pass 'missing option value validation'
+  else
+    fail 'missing option value validation' "expected status to reject missing --backend value, got: $(cat "$stderr_file")"
   fi
 }
 

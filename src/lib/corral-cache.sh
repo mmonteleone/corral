@@ -1,28 +1,34 @@
 # Cache and quant helpers for corral.
 #
 # Manages the local HuggingFace hub cache (~/.cache/huggingface/hub). Provides:
-#   - Model spec parsing: _parse_model_spec() splits "user/model:quant"
+#   - Public helpers: parse_model_spec(), cache_dir_has_gguf(),
+#     cache_dir_has_mlx_weights(), collect_cached_model_entries(),
+#     collect_mlx_model_entries(), find_cached_gguf_files(),
+#     find_cached_gguf_paths_by_quant(), find_gguf_by_quant(), remove_quant_files(),
+#     resolve_link(), model_name_to_cache_dir(), cache_dir_to_model_name()
 #   - Quant extraction: extract_quant_from_filename(), normalize_quant_tag()
-#   - GGUF discovery: _find_cached_gguf_paths(), _find_gguf_by_quant(), etc.
-#   - MLX detection: _cache_dir_has_mlx_weights() — positive match via safetensors/bin/pt
+#   - GGUF discovery: _find_cached_gguf_paths() plus public lookup helpers
+#   - MLX detection: cache_dir_has_mlx_weights() — positive match via safetensors/bin/pt
 #   - Cache dir conversion: model_name_to_cache_dir() ↔ cache_dir_to_model_name()
 #   - Entry collection: collect_cached_model_entries() (GGUF), collect_mlx_model_entries()
-#   - In-use guards: model_is_in_use(), mlx_model_is_in_use(), quant_is_in_use()
-#   - Commands: cmd_list (ls), cmd_remove (rm)
+#   - Private cache helpers: _cached_quant_tags(), _find_cached_gguf_paths()
 #
-# Entry format: pipe-delimited "name|quant|size|backend" rows consumed by cmd_list.
+# Entry format: pipe-delimited "name|quant|size|backend" rows consumed by inventory commands.
 # shellcheck shell=bash
 
 # Parse "user/model[:quant]" into globals REPLY_MODEL and REPLY_QUANT.
 # Uses bash parameter expansion operators:
 #   %%:*  — remove the longest suffix matching ":*"  → everything before the first ':'
 #   #*:   — remove the shortest prefix matching "*:" → everything after the first ':'
-_parse_model_spec() {
+parse_model_spec() {
   local spec="$1"
+  # shellcheck disable=SC2034  # Returned via REPLY_* globals consumed across modules.
   REPLY_MODEL="${spec%%:*}"
   if [[ "$spec" == *:* ]]; then
+    # shellcheck disable=SC2034  # Returned via REPLY_* globals consumed across modules.
     REPLY_QUANT="${spec#*:}"
   else
+    # shellcheck disable=SC2034  # Returned via REPLY_* globals consumed across modules.
     REPLY_QUANT=""
   fi
 }
@@ -63,29 +69,12 @@ normalize_quant_tag() {
   printf '%s\n' "$quant"
 }
 
-# Find cached GGUF file paths in a model's HF cache snapshots directory.
-# HuggingFace hub stores downloaded files under snapshots/<revision-hash>/.
-# A model may have multiple snapshot revisions, so we glob all of them.
-# Prints one full path per line, deduplicated and sorted.
-_find_cached_gguf_paths() {
-  local cache_dir="$1"
-  local snapshot_dir
-  for snapshot_dir in "$cache_dir"/snapshots/*/; do
-    # [[ -d ... ]] || continue: skip if the glob matched nothing (nullglob off)
-    # or the path isn't actually a directory.
-    [[ -d "$snapshot_dir" ]] || continue
-    # -type l: also match symlinks, since HF hub stores GGUF files as symlinks
-    # pointing to content-addressed blobs under blobs/.
-    find "$snapshot_dir" \( -type f -o -type l \) -name '*.gguf' -print
-  done | sort -u
-}
-
 # Find cached GGUF files in a model's HF cache snapshots directory.
 # Prints one basename per line, deduplicated and sorted.
 # 'while IFS= read -r': read one line at a time with no field-splitting (IFS=)
 # and no backslash interpretation (-r). This is the safe idiom for processing
 # lines that may contain spaces or special characters.
-_find_cached_gguf_files() {
+find_cached_gguf_files() {
   local cache_dir="$1"
   local f
   while IFS= read -r f; do
@@ -96,7 +85,7 @@ _find_cached_gguf_files() {
 
 # Find cached GGUF filenames whose extracted quant tag matches the given tag.
 # Prints matching basenames, one per line.
-_find_gguf_by_quant() {
+find_gguf_by_quant() {
   local cache_dir="$1"
   local quant="$2"
   local normalized_quant
@@ -109,12 +98,12 @@ _find_gguf_by_quant() {
     if [[ "$(normalize_quant_tag "$tag")" == "$normalized_quant" ]]; then
       printf '%s\n' "$fname"
     fi
-  done < <(_find_cached_gguf_files "$cache_dir")
+  done < <(find_cached_gguf_files "$cache_dir")
 }
 
 # Find cached GGUF file paths whose extracted quant tag matches the given tag.
 # Prints matching full paths, one per line.
-_find_cached_gguf_paths_by_quant() {
+find_cached_gguf_paths_by_quant() {
   local cache_dir="$1"
   local quant="$2"
   local normalized_quant
@@ -134,7 +123,7 @@ _find_cached_gguf_paths_by_quant() {
 # a hard dependency on realpath (not available on all systems).
 # The (cd ... && printf) runs in a subshell so the working directory change
 # doesn't leak into the caller. $PWD after cd gives the canonical absolute path.
-_resolve_link() {
+resolve_link() {
   local path="$1"
   if [[ -L "$path" ]]; then
     local dir target
@@ -157,7 +146,7 @@ _resolve_link() {
 # both the symlink in snapshots/ AND the backing blob to free disk space;
 # deleting only the symlink leaves orphaned blobs behind.
 # Returns 0 if at least one file was removed, 1 otherwise.
-_remove_quant_files() {
+remove_quant_files() {
   local cache_dir="$1"
   local quant="$2"
   local removed=0
@@ -170,14 +159,14 @@ _remove_quant_files() {
     # If the file is a symlink, also delete the backing blob it points to.
     if [[ -L "$f" ]]; then
       local blob_path
-      blob_path="$(_resolve_link "$f")"
+      blob_path="$(resolve_link "$f")"
       if [[ -f "$blob_path" ]]; then
         rm -f "$blob_path"
       fi
     fi
     rm -f "$f"
     removed=$((removed + 1))
-  done < <(_find_cached_gguf_paths_by_quant "$cache_dir" "$quant")
+  done < <(find_cached_gguf_paths_by_quant "$cache_dir" "$quant")
   # Bash arithmetic: [[ expr ]] treats the result as a boolean test.
   [[ $removed -gt 0 ]]
 }
@@ -214,7 +203,7 @@ collect_mlx_model_entries() {
     local dir
     for dir in "$HF_HUB_DIR"/models--*/; do
       [[ -d "$dir" ]] || continue
-      if ! _cache_dir_has_mlx_weights "$dir"; then
+      if ! cache_dir_has_mlx_weights "$dir"; then
         continue
       fi
       local model_name
@@ -229,7 +218,7 @@ collect_mlx_model_entries() {
 # Return success if a model cache directory contains MLX-compatible model
 # weights (safetensors, .bin, or .pt). This positively identifies MLX models
 # rather than inferring from absence of GGUF files.
-_cache_dir_has_mlx_weights() {
+cache_dir_has_mlx_weights() {
   local cache_dir="$1"
   local snapshot_dir
   for snapshot_dir in "$cache_dir"/snapshots/*/; do
@@ -242,27 +231,11 @@ _cache_dir_has_mlx_weights() {
 }
 
 # Return success if a model cache directory contains at least one GGUF file.
-_cache_dir_has_gguf() {
+cache_dir_has_gguf() {
   local cache_dir="$1"
   local gguf_files
-  gguf_files="$(_find_cached_gguf_files "$cache_dir")"
+  gguf_files="$(find_cached_gguf_files "$cache_dir")"
   [[ -n "$gguf_files" ]]
-}
-
-# List the distinct quant tags present in a model's cache directory.
-# Extracts the quant tag from each GGUF filename and deduplicates.
-cached_quant_tags() {
-  local cache_dir="$1"
-  local gguf_files
-  gguf_files="$(_find_cached_gguf_files "$cache_dir")"
-  if [[ -z "$gguf_files" ]]; then
-    return 0
-  fi
-
-  while IFS= read -r fname; do
-    [[ -z "$fname" ]] && continue
-    extract_quant_from_filename "$fname"
-  done <<< "$gguf_files" | sort -u
 }
 
 # Check whether a model (and optionally a specific quant) is already in the cache.
@@ -279,7 +252,7 @@ cache_has_model_or_quant() {
     return 0
   fi
   local matches
-  matches="$(_find_gguf_by_quant "$cache_dir" "$quant")"
+  matches="$(find_gguf_by_quant "$cache_dir" "$quant")"
   [[ -n "$matches" ]]
 }
 
@@ -294,7 +267,7 @@ collect_cached_model_entries() {
     model_name="$(cache_dir_to_model_name "$dir")"
 
     local gguf_files
-    gguf_files="$(_find_cached_gguf_files "$dir")"
+    gguf_files="$(find_cached_gguf_files "$dir")"
     if [[ -z "$gguf_files" ]]; then
       # llama.cpp list scope is GGUF-only.
       continue
@@ -308,7 +281,7 @@ collect_cached_model_entries() {
       while IFS= read -r f; do
         [[ -z "$f" ]] && continue
         matching_files+=("$f")
-      done < <(_find_cached_gguf_paths_by_quant "$dir" "$tag")
+      done < <(find_cached_gguf_paths_by_quant "$dir" "$tag")
 
       # du -shL: -s summarize (one total), -h human-readable, -L follow symlinks.
       # du -chL: same but -c adds a grand total line (we grab it with tail -1).
@@ -322,683 +295,39 @@ collect_cached_model_entries() {
       fi
 
       printf '%s|%s|%s|llama.cpp\n' "$model_name" "$tag" "$size"
-    done < <(cached_quant_tags "$dir")
+    done < <(_cached_quant_tags "$dir")
   done
 }
 
-# Check whether any running llama-cli or llama-server process has open files
-# inside cache_dir. Uses lsof where available (e.g. macOS, most Linux distros);
-# falls back to /proc/PID/maps on systems where lsof is absent.
-model_is_in_use() {
+# Find cached GGUF file paths in a model's HF cache snapshots directory.
+# HuggingFace hub stores downloaded files under snapshots/<revision-hash>/.
+# A model may have multiple snapshot revisions, so we glob all of them.
+# Prints one full path per line, deduplicated and sorted.
+_find_cached_gguf_paths() {
   local cache_dir="$1"
-  local pids
-  # Find PIDs of running llama-cli and llama-server processes.
-  # 'ps -eo pid=,comm=': list all processes with just PID and command name
-  # (the trailing '=' suppresses the header line).
-  pids="$(ps -eo pid=,comm= 2>/dev/null | awk '$2 ~ /llama-(cli|server)$/ || $2 == "mlx_lm.server" {print $1}')"
-  [[ -z "$pids" ]] && return 1
-
-  if command -v lsof >/dev/null 2>&1; then
-    local pid_list
-    # lsof -p needs a comma-separated PID list; join newlines with tr and
-    # strip the trailing comma with sed.
-    pid_list="$(printf '%s' "$pids" | tr '\n' ',' | sed 's/,$//')"
-    # grep -qF: -q quiet (just set exit code), -F fixed-string (no regex).
-    lsof -p "$pid_list" 2>/dev/null | grep -qF "$cache_dir"
-  else
-    local pid
-    while IFS= read -r pid; do
-      [[ -z "$pid" ]] && continue
-      grep -qF "$cache_dir" "/proc/${pid}/maps" 2>/dev/null && return 0
-    done <<< "$pids"
-    return 1
-  fi
+  local snapshot_dir
+  for snapshot_dir in "$cache_dir"/snapshots/*/; do
+    # [[ -d ... ]] || continue: skip if the glob matched nothing (nullglob off)
+    # or the path isn't actually a directory.
+    [[ -d "$snapshot_dir" ]] || continue
+    # -type l: also match symlinks, since HF hub stores GGUF files as symlinks
+    # pointing to content-addressed blobs under blobs/.
+    find "$snapshot_dir" \( -type f -o -type l \) -name '*.gguf' -print
+  done | sort -u
 }
 
-mlx_model_is_in_use() {
-  local model_name="$1"
-  ps -eo comm=,args= -ww 2>/dev/null | awk -v model="$model_name" '
-    {
-      proc = $1
-      is_mlx_proc = 0
-
-      if (proc == "mlx_lm.server" || proc == "mlx_lm.chat") {
-        is_mlx_proc = 1
-      } else {
-        for (i = 2; i <= NF; i++) {
-          if ($i ~ /^-/) {
-            break
-          }
-
-          token = $i
-          sub(/^.*\//, "", token)
-          if (token == "mlx_lm.server" || token == "mlx_lm.chat") {
-            is_mlx_proc = 1
-            break
-          }
-        }
-      }
-
-      if (!is_mlx_proc) {
-        next
-      }
-
-      for (i = 2; i <= NF; i++) {
-        if (($i == "--model" && i < NF && $(i + 1) == model) || $i == ("--model=" model)) {
-          found = 1
-          break
-        }
-      }
-    }
-    END { exit found ? 0 : 1 }
-  '
-}
-
-# Safety check before removing a specific quant: verify none of its files
-# are open by a running llama process. Checks both the symlink path in
-# snapshots/ and the resolved blob path, since the process may have opened
-# either one.
-quant_is_in_use() {
+# List the distinct quant tags present in a model's cache directory.
+# Extracts the quant tag from each GGUF filename and deduplicates.
+_cached_quant_tags() {
   local cache_dir="$1"
-  local model_name="$2"
-  local quant="$3"
-  local qf qblob
-  while IFS= read -r qf; do
-    [[ -z "$qf" ]] && continue
-    if model_is_in_use "$qf"; then
-      die "cannot remove '${model_name}:${quant}': it is currently in use by llama-cli or llama-server."
-    fi
-    if [[ -L "$qf" ]]; then
-      qblob="$(_resolve_link "$qf")"
-      if [[ -n "$qblob" ]] && model_is_in_use "$qblob"; then
-        die "cannot remove '${model_name}:${quant}': it is currently in use by llama-cli or llama-server."
-      fi
-    fi
-  done < <(_find_cached_gguf_paths_by_quant "$cache_dir" "$quant")
-}
-
-# ── list ──────────────────────────────────────────────────────────────────────
-
-cmd_list_usage() {
-  cat <<EOF
-Usage: $SCRIPT_NAME list [--backend <mlx|llama.cpp>] [--quiet] [--models] [--profiles] [--templates]
-  $SCRIPT_NAME ls   [--backend <mlx|llama.cpp>] [--quiet] [--models] [--profiles] [--templates]
-
-Lists backend-scoped cached models plus saved profiles and templates.
-
-When multiple entry types are included, output is grouped into separate
-sections. For GGUF models, each downloaded quant variant is shown as a
-separate row (e.g. user/model:Q4_K_M).
-
-Options:
-  --backend <backend>
-            Model listing backend scope: mlx or llama.cpp. Omit to include both.
-  --models  Include only model entries.
-  --profiles Include only profile entries.
-  --templates Include only template entries.
-  --quiet   Print only model[:quant] identifiers, one per line. Useful for piping.
-EOF
-}
-
-_enable_list_scope() {
-  local scope="$1"
-
-  if [[ "$REPLY_LIST_SCOPE_SET" == "false" ]]; then
-    REPLY_LIST_SHOW_MODELS="false"
-    REPLY_LIST_SHOW_PROFILES="false"
-    REPLY_LIST_SHOW_TEMPLATES="false"
-    REPLY_LIST_SCOPE_SET="true"
-  fi
-
-  case "$scope" in
-    models) REPLY_LIST_SHOW_MODELS="true" ;;
-    profiles) REPLY_LIST_SHOW_PROFILES="true" ;;
-    templates) REPLY_LIST_SHOW_TEMPLATES="true" ;;
-  esac
-}
-
-# Parse arguments for cmd_list.
-#
-# Sets:
-#   REPLY_LIST_BACKEND_FLAG  -> raw --backend value, or empty
-#   REPLY_LIST_QUIET         -> "true" when --quiet was passed
-#   REPLY_LIST_SHOW_MODELS   -> scope flag
-#   REPLY_LIST_SHOW_PROFILES -> scope flag
-#   REPLY_LIST_SHOW_TEMPLATES -> scope flag
-#   REPLY_LIST_SHOW_HELP     -> "true" when -h/--help was passed
-#   REPLY_LIST_ERROR         -> explanatory error string on failure
-_parse_list_args() {
-  REPLY_LIST_BACKEND_FLAG=""
-  REPLY_LIST_QUIET="false"
-  REPLY_LIST_SHOW_MODELS="true"
-  REPLY_LIST_SHOW_PROFILES="true"
-  REPLY_LIST_SHOW_TEMPLATES="true"
-  REPLY_LIST_SCOPE_SET="false"
-  REPLY_LIST_SHOW_HELP="false"
-  REPLY_LIST_ERROR=""
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --backend)
-        [[ $# -ge 2 && -n "${2:-}" ]] || {
-          REPLY_LIST_ERROR="missing value for --backend"
-          return 1
-        }
-        REPLY_LIST_BACKEND_FLAG="$2"
-        _validate_backend_flag "$REPLY_LIST_BACKEND_FLAG"
-        shift 2
-        ;;
-      --quiet)
-        REPLY_LIST_QUIET="true"
-        shift
-        ;;
-      --models)
-        _enable_list_scope models
-        shift
-        ;;
-      --profiles)
-        _enable_list_scope profiles
-        shift
-        ;;
-      --templates)
-        _enable_list_scope templates
-        shift
-        ;;
-      -h|--help)
-        REPLY_LIST_SHOW_HELP="true"
-        return 0
-        ;;
-      *)
-        REPLY_LIST_ERROR="Unknown argument: $1"
-        return 1
-        ;;
-    esac
-  done
-}
-
-cmd_list() {
-  if ! _parse_list_args "$@"; then
-    echo "$REPLY_LIST_ERROR" >&2
-    cmd_list_usage >&2
-    return 1
-  fi
-
-  if [[ "$REPLY_LIST_SHOW_HELP" == "true" ]]; then
-    cmd_list_usage
+  local gguf_files
+  gguf_files="$(find_cached_gguf_files "$cache_dir")"
+  if [[ -z "$gguf_files" ]]; then
     return 0
   fi
 
-  local BACKEND_FLAG="$REPLY_LIST_BACKEND_FLAG"
-  local QUIET="$REPLY_LIST_QUIET"
-  local SHOW_MODELS="$REPLY_LIST_SHOW_MODELS"
-  local SHOW_PROFILES="$REPLY_LIST_SHOW_PROFILES"
-  local SHOW_TEMPLATES="$REPLY_LIST_SHOW_TEMPLATES"
-
-  local BACKEND="all"
-  if [[ -n "$BACKEND_FLAG" ]]; then
-    BACKEND="$(resolve_backend "$BACKEND_FLAG")"
-  fi
-
-  local model_entries=()
-  local profile_entries=()
-  local template_entries=()
-  local entry
-
-  if [[ "$SHOW_MODELS" == "true" ]]; then
-    if [[ "$BACKEND" == "all" || "$BACKEND" == "mlx" ]]; then
-      while IFS= read -r entry; do
-        [[ -z "$entry" ]] && continue
-        model_entries+=("$entry")
-      done < <(collect_mlx_model_entries)
-    fi
-
-    if [[ "$BACKEND" == "all" || "$BACKEND" == "llama.cpp" ]] && [[ -d "$HF_HUB_DIR" ]]; then
-      while IFS= read -r entry; do
-        [[ -z "$entry" ]] && continue
-        model_entries+=("$entry")
-      done < <(collect_cached_model_entries)
-    fi
-    if [[ ${#model_entries[@]} -gt 0 ]]; then
-      local _sorted=()
-      while IFS= read -r entry; do
-        _sorted+=("$entry")
-      done < <(printf '%s\n' "${model_entries[@]}" | sort -f -t'|' -k1,1)
-      model_entries=("${_sorted[@]}")
-    fi
-  fi
-
-  if [[ "$SHOW_PROFILES" == "true" ]]; then
-    while IFS= read -r entry; do
-      [[ -z "$entry" ]] && continue
-      profile_entries+=("$entry")
-    done < <(collect_profile_entries)
-    if [[ ${#profile_entries[@]} -gt 0 ]]; then
-      local _sorted=()
-      while IFS= read -r entry; do
-        _sorted+=("$entry")
-      done < <(printf '%s\n' "${profile_entries[@]}" | sort -f -t'|' -k1,1)
-      profile_entries=("${_sorted[@]}")
-    fi
-  fi
-
-  if [[ "$SHOW_TEMPLATES" == "true" ]]; then
-    while IFS= read -r entry; do
-      [[ -z "$entry" ]] && continue
-      template_entries+=("$entry")
-    done < <(collect_template_entries)
-    if [[ ${#template_entries[@]} -gt 0 ]]; then
-      local _sorted=()
-      while IFS= read -r entry; do
-        _sorted+=("$entry")
-      done < <(printf '%s\n' "${template_entries[@]}" | sort -f -t'|' -k1,1)
-      template_entries=("${_sorted[@]}")
-    fi
-  fi
-
-  local model_count profile_count template_count
-  model_count=${#model_entries[@]}
-  profile_count=${#profile_entries[@]}
-  template_count=${#template_entries[@]}
-
-  if [[ "$model_count" -eq 0 && "$profile_count" -eq 0 && "$template_count" -eq 0 ]]; then
-    if [[ "$SHOW_MODELS" == "true" && "$SHOW_PROFILES" == "true" && "$SHOW_TEMPLATES" == "true" ]]; then
-      echo "No models, profiles, or templates found."
-    elif [[ "$SHOW_MODELS" == "true" ]]; then
-      echo "No models found."
-    elif [[ "$SHOW_PROFILES" == "true" ]]; then
-      echo "No profiles found."
-    else
-      echo "No templates found."
-    fi
-    return 0
-  fi
-
-  if [[ "$QUIET" == "true" ]]; then
-    if [[ "$model_count" -gt 0 ]]; then
-      local e
-      for e in "${model_entries[@]}"; do
-        local name quant
-        name="${e%%|*}"
-        local rest="${e#*|}"
-        quant="${rest%%|*}"
-        if [[ -n "$quant" ]]; then
-          echo "${name}:${quant}"
-        else
-          echo "$name"
-        fi
-      done
-    fi
-
-    if [[ "$profile_count" -gt 0 ]]; then
-      local e
-      for e in "${profile_entries[@]}"; do
-        local pname
-        pname="${e%%|*}"
-        echo "$pname"
-      done
-    fi
-
-    if [[ "$template_count" -gt 0 ]]; then
-      local e
-      for e in "${template_entries[@]}"; do
-        local tname
-        tname="${e%%|*}"
-        echo "$tname"
-      done
-    fi
-  else
-    if [[ "$model_count" -gt 0 ]]; then
-      local color_model_sizes="false"
-      _stdout_supports_color && color_model_sizes="true"
-
-      {
-        local e
-        for e in "${model_entries[@]}"; do
-          local name quant size backend display_name
-          name="${e%%|*}"
-          local rest="${e#*|}"
-          quant="${rest%%|*}"
-          rest="${rest#*|}"
-          size="${rest%%|*}"
-          backend="${rest#*|}"
-          if [[ -n "$quant" ]]; then
-            display_name="${name}:${quant}"
-          else
-            display_name="$name"
-          fi
-          if [[ "$color_model_sizes" == "true" ]]; then
-            size="$(_wrap_color green "$size")"
-          fi
-          printf '%s\t%s\t%s\n' "$display_name" "$backend" "$size"
-        done
-      } | _print_tsv_table 'lll' $'MODEL\tBACKEND\tSIZE'
-    fi
-
-    if [[ "$profile_count" -gt 0 ]]; then
-      [[ "$model_count" -gt 0 ]] && echo
-      {
-        local e
-        for e in "${profile_entries[@]}"; do
-          local pname pmodel
-          pname="${e%%|*}"
-          pmodel="${e#*|}"
-          printf '%s\t%s\n' "$pname" "$pmodel"
-        done
-      } | _print_tsv_table 'll' $'PROFILE\tMODEL'
-    fi
-
-    if [[ "$template_count" -gt 0 ]]; then
-      [[ "$model_count" -gt 0 || "$profile_count" -gt 0 ]] && echo
-      {
-        local e
-        for e in "${template_entries[@]}"; do
-          local tname ttype tmodel
-          tname="${e%%|*}"
-          local trest="${e#*|}"
-          ttype="${trest%%|*}"
-          tmodel="${trest#*|}"
-          printf '%s\t%s\t%s\n' "$tname" "$ttype" "$tmodel"
-        done
-      } | _print_tsv_table 'lll' $'TEMPLATE\tTYPE\tDEFAULT MODEL'
-    fi
-  fi
-}
-
-# ── remove ────────────────────────────────────────────────────────────────────
-
-cmd_remove_usage() {
-  cat <<EOF
-Usage: $SCRIPT_NAME remove [--backend <mlx|llama.cpp>] <MODEL_NAME>[:<QUANT>] [--force]
-  $SCRIPT_NAME rm [--backend <mlx|llama.cpp>] <MODEL_NAME>[:<QUANT>] [--force]
-       $SCRIPT_NAME remove <PROFILE_NAME>
-       $SCRIPT_NAME rm <PROFILE_NAME>
-
-Arguments:
-  MODEL_NAME    HuggingFace model identifier, e.g. unsloth/gemma-4-26B-A4B-it-GGUF
-  QUANT         Optional quant tag to remove only a specific variant
-                (e.g. Q4_K_M, UD-Q6_K). Without it, the entire model is removed.
-
-Use '$SCRIPT_NAME list' to see available quant tags.
-
-Passing a profile name removes that saved profile.
-
-Deletes the locally cached model or quant variant. Refuses if the model is
-currently in use by llama-cli or llama-server.
-
-Model and quant removal applies to GGUF cache entries used by llama.cpp workflows.
-With --backend mlx, quant suffixes are ignored and removal targets MLX model state.
-
-Options:
-  --backend <backend>
-                Removal backend scope for model targets: mlx or llama.cpp (default: platform-detected).
-  --force       Skip the confirmation prompt.
-EOF
-}
-
-# Parse arguments for cmd_remove after the command-level help/no-args guard.
-#
-# Sets:
-#   REPLY_REMOVE_BACKEND_FLAG -> raw --backend value, or empty
-#   REPLY_REMOVE_TARGET_SPEC  -> model/profile target
-#   REPLY_REMOVE_FORCE        -> "true" when --force was passed
-#   REPLY_REMOVE_SHOW_HELP    -> "true" when -h/--help was passed
-#   REPLY_REMOVE_ERROR        -> explanatory error string on failure
-_parse_remove_args() {
-  REPLY_REMOVE_BACKEND_FLAG=""
-  REPLY_REMOVE_TARGET_SPEC=""
-  REPLY_REMOVE_FORCE="false"
-  REPLY_REMOVE_SHOW_HELP="false"
-  REPLY_REMOVE_ERROR=""
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --backend)
-        [[ $# -ge 2 && -n "${2:-}" ]] || {
-          REPLY_REMOVE_ERROR="missing value for --backend"
-          return 1
-        }
-        REPLY_REMOVE_BACKEND_FLAG="$2"
-        _validate_backend_flag "$REPLY_REMOVE_BACKEND_FLAG"
-        shift 2
-        ;;
-      --force)
-        REPLY_REMOVE_FORCE="true"
-        shift
-        ;;
-      -h|--help)
-        REPLY_REMOVE_SHOW_HELP="true"
-        return 0
-        ;;
-      *)
-        if [[ -z "$REPLY_REMOVE_TARGET_SPEC" ]]; then
-          REPLY_REMOVE_TARGET_SPEC="$1"
-          shift
-        else
-          REPLY_REMOVE_ERROR="Unknown argument: $1"
-          return 1
-        fi
-        ;;
-    esac
-  done
-
-  if [[ -z "$REPLY_REMOVE_TARGET_SPEC" && "$REPLY_REMOVE_SHOW_HELP" != "true" ]]; then
-    REPLY_REMOVE_ERROR="missing model or profile target"
-    return 1
-  fi
-}
-
-_remove_existing_profile_target() {
-  local target_spec="$1"
-
-  if [[ "$target_spec" != */* && "$target_spec" != *:* ]]; then
-    local profile_path
-    profile_path="$(_profile_path "$target_spec")"
-    if [[ -f "$profile_path" ]]; then
-      remove_profile_by_name "$target_spec"
-      return 0
-    fi
-  fi
-
-  return 1
-}
-
-# Infer the backend for a remove target from local cache evidence.
-# Decision order:
-#   1. An explicit quant suffix implies llama.cpp/GGUF removal.
-#   2. Cached GGUF files only -> llama.cpp.
-#   3. Cached MLX weights only -> mlx.
-#   4. Both cached in the same repo dir -> require an explicit --backend.
-#   5. No local evidence -> fall back to the normal backend defaulting rules.
-_infer_remove_backend() {
-  local target_spec="$1"
-  local model_name quant
-
-  _parse_model_spec "$target_spec"
-  model_name="$REPLY_MODEL"
-  quant="$REPLY_QUANT"
-
-  if [[ -n "$quant" ]]; then
-    printf 'llama.cpp'
-    return 0
-  fi
-
-  local cache_dir
-  cache_dir="$(model_name_to_cache_dir "$model_name" 2>/dev/null || true)"
-  if [[ -n "$cache_dir" && -d "$cache_dir" ]]; then
-    local has_gguf="false"
-    local has_mlx="false"
-
-    _cache_dir_has_gguf "$cache_dir" && has_gguf="true"
-    _cache_dir_has_mlx_weights "$cache_dir" && has_mlx="true"
-
-    case "${has_gguf}:${has_mlx}" in
-      true:false)
-        printf 'llama.cpp'
-        return 0
-        ;;
-      false:true)
-        printf 'mlx'
-        return 0
-        ;;
-      true:true)
-        die "model '${model_name}' has both GGUF and MLX cache entries. Re-run with --backend llama.cpp or --backend mlx to choose what to remove."
-        ;;
-    esac
-  fi
-
-  resolve_backend ""
-}
-
-_remove_llama_target() {
-  local target_spec="$1"
-  local force="$2"
-
-  local model_name quant
-  _parse_model_spec "$target_spec"
-  model_name="$REPLY_MODEL"
-  quant="$REPLY_QUANT"
-
-  local cache_dir
-  cache_dir="$(model_name_to_cache_dir "$model_name")"
-
-  if [[ ! -d "$cache_dir" ]]; then
-    die "model not found: ${model_name} (expected at ${cache_dir})"
-  fi
-
-  if [[ -n "$quant" ]]; then
-    # ── Remove a single quant variant ──
-    local matching_files
-    matching_files="$(_find_gguf_by_quant "$cache_dir" "$quant")"
-    if [[ -z "$matching_files" ]]; then
-      die "no cached files matching quant '${quant}' found for model '${model_name}'"
-    fi
-
-    quant_is_in_use "$cache_dir" "$model_name" "$quant"
-
-    confirm_destructive_action "removing quant '${quant}' from '${model_name}'" "$force" || return 1
-
-    echo "Removing quant: ${model_name}:${quant}"
-    _remove_quant_files "$cache_dir" "$quant"
-
-    local remaining
-    remaining="$(_find_cached_gguf_files "$cache_dir")"
-    if [[ -z "$remaining" ]]; then
-      echo "No remaining quants. Removing model cache."
-      rm -rf "$cache_dir"
-    fi
-    echo "Done."
-    return 0
-  fi
-
-  # ── Remove the entire model (all quants) ──
-  if model_is_in_use "$cache_dir"; then
-    die "cannot remove '${model_name}': it is currently in use by llama-cli or llama-server."
-  fi
-
-  local all_quants quant_list=()
-  all_quants="$(_find_cached_gguf_files "$cache_dir")"
-  if [[ -n "$all_quants" ]]; then
-    while IFS= read -r fname; do
-      [[ -z "$fname" ]] && continue
-      local tag
-      tag="$(extract_quant_from_filename "$fname")"
-      quant_list+=("$tag")
-    done < <(printf '%s\n' "$all_quants" | sort -u)
-  fi
-
-  echo "The following quant variants will be removed:"
-  if [[ ${#quant_list[@]} -gt 0 ]]; then
-    local q
-    for q in "${quant_list[@]}"; do
-      printf '  %s:%s\n' "$model_name" "$q"
-    done
-  else
-    printf '  %s  (no GGUF variants found)\n' "$model_name"
-  fi
-  echo
-
-  confirm_destructive_action "removing cached model '${model_name}'" "$force" || return 1
-
-  echo "Removing model: $model_name"
-  rm -rf "$cache_dir"
-  echo "Done."
-}
-
-cmd_remove() {
-  # Idiomatic help/no-args guard used throughout corral:
-  # With no args: print usage to stderr and return 1 (error).
-  # With -h/--help: print usage to stdout and return 0 (success).
-  if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
-    cmd_remove_usage
-    [[ $# -eq 0 ]] && return 1 || return 0
-  fi
-
-  if ! _parse_remove_args "$@"; then
-    echo "$REPLY_REMOVE_ERROR" >&2
-    cmd_remove_usage >&2
-    return 1
-  fi
-
-  if [[ "$REPLY_REMOVE_SHOW_HELP" == "true" ]]; then
-    cmd_remove_usage
-    return 0
-  fi
-
-  local BACKEND_FLAG="$REPLY_REMOVE_BACKEND_FLAG"
-  local target_spec="$REPLY_REMOVE_TARGET_SPEC"
-  local force="$REPLY_REMOVE_FORCE"
-
-  # If TARGET has no model slash/quant suffix and matches an existing profile,
-  # treat this as profile deletion for parity with model removal.
-  if _remove_existing_profile_target "$target_spec"; then
-    return 0
-  fi
-
-  local BACKEND
-  if [[ -n "$BACKEND_FLAG" ]]; then
-    BACKEND="$(resolve_backend "$BACKEND_FLAG")"
-  else
-    BACKEND="$(_infer_remove_backend "$target_spec")"
-  fi
-
-  if [[ "$BACKEND" == "mlx" ]]; then
-    _remove_mlx_target "$target_spec" "$force"
-    return 0
-  fi
-
-  _remove_llama_target "$target_spec" "$force"
-}
-
-_remove_mlx_target() {
-  local target_spec="$1"
-  local force="$2"
-
-  local model_name
-  _parse_model_spec "$target_spec"
-  model_name="$REPLY_MODEL"
-
-  if [[ -n "$REPLY_QUANT" ]]; then
-    echo "Warning: MLX backend does not use quant specifiers; ignoring ':${REPLY_QUANT}'." >&2
-  fi
-
-  if [[ "$model_name" != */* ]]; then
-    die "profiles are not supported with the MLX backend. Use a HuggingFace model id (USER/MODEL) or --backend llama.cpp."
-  fi
-
-  if mlx_model_is_in_use "$model_name"; then
-    die "cannot remove '${model_name}': it is currently in use by mlx_lm.chat or mlx_lm.server."
-  fi
-
-  local cache_dir
-  cache_dir="$(model_name_to_cache_dir "$model_name")"
-  if [[ ! -d "$cache_dir" ]]; then
-    die "model not found: ${model_name}"
-  fi
-
-  confirm_destructive_action "removing MLX model '${model_name}'" "$force" || return 1
-
-  echo "Removing model cache: $cache_dir"
-  rm -rf "$cache_dir"
-
-  echo "Removed MLX model: $model_name"
+  while IFS= read -r fname; do
+    [[ -z "$fname" ]] && continue
+    extract_quant_from_filename "$fname"
+  done <<< "$gguf_files" | sort -u
 }

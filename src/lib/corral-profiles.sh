@@ -1,10 +1,12 @@
 # Profile and template helpers for corral.
 #
 # Manages named run/serve profiles and templates stored on disk. Provides:
+#   - Public helpers: profile_path(), load_profile(), collect_profile_entries(),
+#     collect_template_entries(), remove_profile_by_name()
 #   - Directory resolution: _profiles_dir(), _templates_dir() (env-overridable)
 #   - Name validation: _validate_name() → _validate_profile_name(), _validate_template_name()
 #   - Template lookup: _get_template_content() (user-defined overrides built-in)
-#   - Profile I/O: _load_profile() with INI-like section filtering by command and backend
+#   - Profile I/O: load_profile() with INI-like section filtering by command and backend
 #   - Section matching: _section_matches() — [run], [serve], [mlx], [llama.cpp], [mlx.run], etc.
 #   - Entry collection: collect_profile_entries(), collect_template_entries()
 #   - Commands: cmd_profile (set/show/duplicate), cmd_template (show/set/remove)
@@ -13,82 +15,11 @@
 # in dev mode, they are read from src/templates/*.conf.
 # shellcheck shell=bash
 
-# Return the resolved profiles directory (env override or default).
-# ${CORRAL_PROFILES_DIR:-$DEFAULT_PROFILES_DIR}: use the env var if set,
-# otherwise fall back to the default. This pattern is used for all overridable dirs.
-_profiles_dir() {
-  local dir="${CORRAL_PROFILES_DIR:-$DEFAULT_PROFILES_DIR}"
-  printf '%s' "$(_normalize_dir_path "$dir")"
-}
-
 # Return the path for a named profile file.
-_profile_path() {
+profile_path() {
   local name="$1"
   printf '%s/%s' "$(_profiles_dir)" "$name"
 }
-
-# Return the resolved templates directory (env override or default).
-_templates_dir() {
-  local dir="${CORRAL_TEMPLATES_DIR:-$DEFAULT_TEMPLATES_DIR}"
-  printf '%s' "$(_normalize_dir_path "$dir")"
-}
-
-# Return the path for a named template file.
-_template_path() {
-  local name="$1"
-  printf '%s/%s' "$(_templates_dir)" "$name"
-}
-
-# Print the content of a built-in template, or return 1 if the name is unknown.
-_get_builtin_template_content() {
-  local name="$1"
-# BEGIN_BUILTIN_TEMPLATES
-  # In dev mode (sourced from src/), read template content from src/templates/.
-  # At build time, tools/build.sh replaces this block with inlined content.
-  local _tmpl_dir
-  _tmpl_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../templates"
-  if [[ -f "${_tmpl_dir}/${name}.conf" ]]; then
-    cat "${_tmpl_dir}/${name}.conf"
-    return 0
-  fi
-  return 1
-# END_BUILTIN_TEMPLATES
-}
-
-# Print the content of a template (user-defined takes precedence over built-in).
-# Dies if the template is not found by either source.
-_get_template_content() {
-  local name="$1"
-  local path
-  path="$(_template_path "$name")"
-  if [[ -f "$path" ]]; then
-    cat "$path"
-  elif _get_builtin_template_content "$name"; then
-    # ':' (colon): bash no-op. The elif already printed the template to stdout;
-    # this empty then-body avoids a syntax error.
-    :
-  else
-    die "template '${name}' not found"
-  fi
-}
-
-# Validate a user-supplied identifier: must consist of alphanumeric characters,
-# hyphens, and underscores only. The regex [^a-zA-Z0-9_-] matches any character
-# NOT in the allowed set; if it matches, the name is invalid.
-# Used by both profile and template name validation.
-_validate_name() {
-  local kind="$1"
-  local name="$2"
-  if [[ -z "$name" || "$name" =~ [^a-zA-Z0-9_-] ]]; then
-    die "invalid ${kind} name '${name}': use only letters, digits, hyphens, and underscores"
-  fi
-}
-
-# Validate a template name: alphanumeric, hyphens, underscores only.
-_validate_template_name() { _validate_name "template" "$1"; }
-
-# Validate a profile name: alphanumeric, hyphens, underscores only.
-_validate_profile_name() { _validate_name "profile" "$1"; }
 
 # Emit one line per profile in pipe-delimited format:
 #   {profile_name}|{model_spec}
@@ -147,31 +78,14 @@ collect_template_entries() {
 }
 
 # Load a profile file.
-# Usage: _load_profile <name> [run|serve] [mlx|llama.cpp]
+# Usage: load_profile <name> [run|serve] [mlx|llama.cpp]
 # Sets REPLY_PROFILE_MODEL and REPLY_PROFILE_ARGS (array).
-#
-# Profile files use an INI-like section model with two dimensions:
-#   command: run | serve
-#   backend: mlx | llama.cpp
-#
-# Section headers and their semantics:
-#   (no header)       — common to all commands and backends.
-#   [run]             — included only when mode is "run", any backend.
-#   [serve]           — included only when mode is "serve", any backend.
-#   [mlx]             — included for MLX backend, any command.
-#   [llama.cpp]       — included for llama.cpp backend, any command.
-#   [mlx.run]         — included only for MLX backend + "run" command.
-#   [mlx.serve]       — included only for MLX backend + "serve" command.
-#   [llama.cpp.run]   — included only for llama.cpp backend + "run" command.
-#   [llama.cpp.serve] — included only for llama.cpp backend + "serve" command.
-#
-# Each flag line holds one flag or a flag+value pair (e.g. "--ctx-size 8192").
-_load_profile() {
+load_profile() {
   local name="$1"
   local mode="${2:-}"
   local backend="${3:-}"
   local path
-  path="$(_profile_path "$name")"
+  path="$(profile_path "$name")"
   [[ -f "$path" ]] || die "profile '${name}' not found (${path})"
 
   REPLY_PROFILE_MODEL=""
@@ -180,11 +94,9 @@ _load_profile() {
   local section="common"
   local line
   while IFS= read -r line || [[ -n "$line" ]]; do
-    # Strip trailing whitespace (bash extglob pattern *( ) = zero or more spaces).
-    line="${line%%*( )}"
+    line="$(_trim_trailing_whitespace "$line")"
     [[ -z "$line" || "$line" == '#'* ]] && continue
 
-    # Section headers.
     case "$line" in
       '[run]')             section="run";             continue ;;
       '[serve]')           section="serve";           continue ;;
@@ -201,64 +113,15 @@ _load_profile() {
       continue
     fi
 
-    # Skip flags from non-matching sections.
     if ! _section_matches "$section" "$mode" "$backend"; then
       continue
     fi
 
-    # read -ra word-splits the line into an array so that multi-token
-    # lines like "--ctx-size 8192" become two separate array elements.
     read -ra _flag_words <<< "$line"
     REPLY_PROFILE_ARGS+=("${_flag_words[@]}")
   done < "$path"
 
   [[ -n "$REPLY_PROFILE_MODEL" ]] || die "profile '${name}' has no 'model=' line"
-}
-
-# Return 0 if a section's flags should be included given the current
-# command mode and backend.
-#
-# Matching rules:
-#   common            -> always include
-#   run / serve       -> matching mode, or any mode when mode is empty
-#   mlx / llama.cpp   -> matching backend, or any backend when backend is empty
-#   mlx.run etc.      -> both dimensions must match; empty selectors widen
-#                        the match instead of narrowing it
-#
-# Callers intentionally pass empty mode/backend when they want an unscoped read
-# of the file (for example, 'profile show'), so empty selector values act like
-# wildcards here.
-_section_matches() {
-  local section="$1"
-  local mode="$2"
-  local backend="$3"
-
-  case "$section" in
-    common)
-      return 0
-      ;;
-    run|serve)
-      # Command-only section: include if mode is empty (unscoped) or matches.
-      [[ -z "$mode" || "$section" == "$mode" ]]
-      ;;
-    mlx|llama.cpp)
-      # Backend-only section: include if backend is empty (unscoped) or matches.
-      [[ -z "$backend" || "$section" == "$backend" ]]
-      ;;
-    mlx.run|mlx.serve|llama.cpp.run|llama.cpp.serve)
-      # Backend+command section: both must match (or be empty).
-      # %.*: shortest suffix strip → "llama.cpp.run" → "llama.cpp"
-      # ##*.: greedy prefix strip → "llama.cpp.run" → "run"
-      local sec_backend="${section%.*}"
-      local sec_mode="${section##*.}"
-      [[ -z "$backend" || "$sec_backend" == "$backend" ]] && \
-        [[ -z "$mode" || "$sec_mode" == "$mode" ]]
-      ;;
-    *)
-      # Unknown section: skip silently for forward compatibility.
-      return 1
-      ;;
-  esac
 }
 
 cmd_profile_usage() {
@@ -382,6 +245,135 @@ cmd_template() {
   esac
 }
 
+remove_profile_by_name() {
+  local name="$1"
+  _validate_profile_name "$name"
+
+  local path
+  path="$(profile_path "$name")"
+  [[ -f "$path" ]] || die "profile '${name}' not found"
+
+  rm -f "$path"
+  echo "Profile '${name}' removed."
+}
+
+# Return the resolved profiles directory (env override or default).
+# ${CORRAL_PROFILES_DIR:-$DEFAULT_PROFILES_DIR}: use the env var if set,
+# otherwise fall back to the default. This pattern is used for all overridable dirs.
+_profiles_dir() {
+  local dir="${CORRAL_PROFILES_DIR:-$DEFAULT_PROFILES_DIR}"
+  printf '%s' "$(normalize_dir_path "$dir")"
+}
+
+# Return the resolved templates directory (env override or default).
+_templates_dir() {
+  local dir="${CORRAL_TEMPLATES_DIR:-$DEFAULT_TEMPLATES_DIR}"
+  printf '%s' "$(normalize_dir_path "$dir")"
+}
+
+# Return the path for a named template file.
+_template_path() {
+  local name="$1"
+  printf '%s/%s' "$(_templates_dir)" "$name"
+}
+
+# Print the content of a built-in template, or return 1 if the name is unknown.
+_get_builtin_template_content() {
+  local name="$1"
+# BEGIN_BUILTIN_TEMPLATES
+  # In dev mode (sourced from src/), read template content from src/templates/.
+  # At build time, tools/build.sh replaces this block with inlined content.
+  local _tmpl_dir
+  _tmpl_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../templates"
+  if [[ -f "${_tmpl_dir}/${name}.conf" ]]; then
+    cat "${_tmpl_dir}/${name}.conf"
+    return 0
+  fi
+  return 1
+# END_BUILTIN_TEMPLATES
+}
+
+# Print the content of a template (user-defined takes precedence over built-in).
+# Dies if the template is not found by either source.
+_get_template_content() {
+  local name="$1"
+  local path
+  path="$(_template_path "$name")"
+  if [[ -f "$path" ]]; then
+    cat "$path"
+  elif _get_builtin_template_content "$name"; then
+    # ':' (colon): bash no-op. The elif already printed the template to stdout;
+    # this empty then-body avoids a syntax error.
+    :
+  else
+    die "template '${name}' not found"
+  fi
+}
+
+# Validate a user-supplied identifier: must consist of alphanumeric characters,
+# hyphens, and underscores only. The regex [^a-zA-Z0-9_-] matches any character
+# NOT in the allowed set; if it matches, the name is invalid.
+# Used by both profile and template name validation.
+_validate_name() {
+  local kind="$1"
+  local name="$2"
+  if [[ -z "$name" || "$name" =~ [^a-zA-Z0-9_-] ]]; then
+    die "invalid ${kind} name '${name}': use only letters, digits, hyphens, and underscores"
+  fi
+}
+
+# Validate a template name: alphanumeric, hyphens, underscores only.
+_validate_template_name() { _validate_name "template" "$1"; }
+
+# Validate a profile name: alphanumeric, hyphens, underscores only.
+_validate_profile_name() { _validate_name "profile" "$1"; }
+
+# Return 0 if a section's flags should be included given the current
+# command mode and backend.
+#
+# Matching rules:
+#   common            -> always include
+#   run / serve       -> matching mode, or any mode when mode is empty
+#   mlx / llama.cpp   -> matching backend, or any backend when backend is empty
+#   mlx.run etc.      -> both dimensions must match; empty selectors widen
+#                        the match instead of narrowing it
+#
+# Callers intentionally pass empty mode/backend when they want an unscoped read
+# of the file (for example, 'profile show'), so empty selector values act like
+# wildcards here.
+_section_matches() {
+  local section="$1"
+  local mode="$2"
+  local backend="$3"
+
+  case "$section" in
+    common)
+      return 0
+      ;;
+    run|serve)
+      # Command-only section: include if mode is empty (unscoped) or matches.
+      [[ -z "$mode" || "$section" == "$mode" ]]
+      ;;
+    mlx|llama.cpp)
+      # Backend-only section: include if backend is empty (unscoped) or matches.
+      [[ -z "$backend" || "$section" == "$backend" ]]
+      ;;
+    mlx.run|mlx.serve|llama.cpp.run|llama.cpp.serve)
+      # Backend+command section: both must match (or be empty).
+      # %.*: shortest suffix strip → "llama.cpp.run" → "llama.cpp"
+      # ##*.: greedy prefix strip → "llama.cpp.run" → "run"
+      local sec_backend="${section%.*}"
+      local sec_mode="${section##*.}"
+      [[ -z "$backend" || "$sec_backend" == "$backend" ]] && \
+        [[ -z "$mode" || "$sec_mode" == "$mode" ]]
+      ;;
+    *)
+      # Unknown section: skip silently for forward compatibility.
+      return 1
+      ;;
+  esac
+}
+
 _emit_flag_lines_from_args() {
   local args=("$@")
   local i=0
@@ -479,7 +471,7 @@ _cmd_profile_set() {
   mkdir -p "$profiles_dir"
 
   local path
-  path="$(_profile_path "$name")"
+  path="$(profile_path "$name")"
 
   if [[ ${#extra_args[@]} -gt 0 ]]; then
     _write_profile_file "$path" "$model_spec" "$template_content" "${extra_args[@]}"
@@ -499,22 +491,10 @@ _cmd_profile_show() {
   _validate_profile_name "$name"
 
   local path
-  path="$(_profile_path "$name")"
+  path="$(profile_path "$name")"
   [[ -f "$path" ]] || die "profile '${name}' not found"
 
   cat "$path"
-}
-
-remove_profile_by_name() {
-  local name="$1"
-  _validate_profile_name "$name"
-
-  local path
-  path="$(_profile_path "$name")"
-  [[ -f "$path" ]] || die "profile '${name}' not found"
-
-  rm -f "$path"
-  echo "Profile '${name}' removed."
 }
 
 _cmd_profile_duplicate() {
@@ -530,8 +510,8 @@ _cmd_profile_duplicate() {
   _validate_profile_name "$dst"
 
   local src_path dst_path
-  src_path="$(_profile_path "$src")"
-  dst_path="$(_profile_path "$dst")"
+  src_path="$(profile_path "$src")"
+  dst_path="$(profile_path "$dst")"
 
   [[ -f "$src_path" ]] || die "source profile '${src}' not found"
   [[ ! -f "$dst_path" ]] || die "destination profile '${dst}' already exists; remove it first"

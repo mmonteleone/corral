@@ -19,14 +19,17 @@ src/
   corral.sh                  Entry point and command dispatch
   lib/
     corral-helpers.sh        Shared helpers, error handling, tables, backend resolution
-    corral-cache.sh          HF cache discovery, list/remove logic, quant handling
+    corral-cache.sh          HF cache discovery and quant handling
     corral-profiles.sh       Profiles and templates
-    corral-runtime.sh        install/update/uninstall/pull/run/serve/ps/status/prune
+    corral-shell.sh          Shell profile and completion installation
+    corral-runtime.sh        install/update/uninstall/pull/run/serve/status/prune
+    corral-processes.sh      Runtime process discovery and ps output
+    corral-inventory.sh      list/remove inventory across models, profiles, templates
     corral-launch.sh         launch integrations for pi and opencode
     corral-search.sh         Hugging Face search and browse
     corral-completions.sh    fish/zsh/bash completion generators
   templates/                 Built-in profile templates
-  launch-templates/          Built-in launcher config templates
+  launch/          Built-in launcher config templates
   jq/                        jq helpers used by the CLI
 dist/
   corral                     Generated output
@@ -72,14 +75,25 @@ What they do:
 ### Core modules
 
 - `corral-helpers.sh`: shared foundation for all modules. Includes `die`, prompt helpers, command checks, path normalization, color/table output, and backend resolution.
-- `corral-cache.sh`: source of truth for local model discovery and removal. Reads the Hugging Face cache directly, maps cache paths to model IDs, extracts GGUF quant tags, and supports `list`/`remove`.
+- `corral-cache.sh`: source of truth for local model discovery. Reads the Hugging Face cache directly, maps cache paths to model IDs, and extracts GGUF quant tags.
 - `corral-profiles.sh`: manages plain-text profiles and templates under `~/.config/corral/`.
-- `corral-runtime.sh`: backend lifecycle plus `pull`, `run`, `serve`, and `ps`.
+- `corral-shell.sh`: manages PATH and completion installation across fish, zsh, and bash.
+- `corral-runtime.sh`: backend lifecycle plus `pull`, `run`, and `serve`.
+- `corral-processes.sh`: detects running llama.cpp and MLX processes and powers `ps` plus in-use guards.
+- `corral-inventory.sh`: owns `list` and `remove`, combining cache, profiles, and templates into a single user-facing inventory.
 - `corral-launch.sh`: configures supported coding harnesses from a running `corral serve` instance.
 - `corral-search.sh`: Hugging Face search/browse behavior.
 - `corral-completions.sh`: emits completion scripts for fish, zsh, and bash.
 
 ## Key repository conventions
+
+### Public vs private helpers
+
+- Functions intended for use across sourced modules should not use a leading underscore.
+- Module-local helpers should use a leading underscore.
+- When extracting shared behavior, prefer making the public surface explicit rather than reaching across modules to underscore-prefixed helpers.
+- Within each module, keep public functions grouped first and move underscore-prefixed helpers to the bottom of the file.
+- If a helper is used outside its defining module, rename it to a public non-underscored name instead of treating that module as an exception.
 
 ### `dist/corral` is generated
 
@@ -190,7 +204,7 @@ Do not casually change the quiet output format. Completion behavior and tests de
 
 ### Adding a new launch harness
 
-1. Add a template under `src/launch-templates/`.
+1. Add a template under `src/launch/`.
 2. Add the harness-specific wiring in `src/lib/corral-launch.sh`.
 3. Update launch help and completions.
 4. Add tests.
