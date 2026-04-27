@@ -4451,7 +4451,7 @@ test_profile_set_builtin_with_model() {
     fail 'profile set from builtin with model' "expected model line, got: $content"
     return
   fi
-  if ! assert_contains "$content" "--temp 0.4"; then
+  if ! assert_contains "$content" "--temp 0.3"; then
     fail 'profile set from builtin with model' "expected code template flag --temp, got: $content"
     return
   fi
@@ -4551,7 +4551,7 @@ test_profile_set_template_overwrites_existing() {
     fail 'profile set template overwrites existing' "expected updated model in profile, got: $out"
     return
   fi
-  if ! assert_contains "$out" '--temp 0.4'; then
+  if ! assert_contains "$out" '--temp 0.3'; then
     fail 'profile set template overwrites existing' "expected template flags in profile, got: $out"
     return
   fi
@@ -4595,8 +4595,8 @@ test_template_show_builtin() {
 
   local out
   out="$(cat "$stdout_file")"
-  if ! assert_contains "$out" "--temp 0.4"; then
-    fail 'template show builtin' "expected '--temp 0.4' in code template, got: $out"
+  if ! assert_contains "$out" "--temp 0.3"; then
+    fail 'template show builtin' "expected '--temp 0.3' in code template, got: $out"
     return
   fi
   if ! assert_contains "$out" "-ngl all"; then
