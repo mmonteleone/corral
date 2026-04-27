@@ -554,7 +554,7 @@ test_validate_template_name_invalid() {
 test_builtin_template_chat() {
   local result
   result="$(_get_builtin_template_content "chat")"
-  if assert_contains "$result" "--temp 1.0" && assert_contains "$result" "[llama.cpp]"; then
+  if assert_contains "$result" "--temp 0.7" && assert_contains "$result" "[llama.cpp]"; then
     pass 'builtin template chat'
   else
     fail 'builtin template chat' "got: $result"
@@ -564,7 +564,7 @@ test_builtin_template_chat() {
 test_builtin_template_code() {
   local result
   result="$(_get_builtin_template_content "code")"
-  if assert_contains "$result" "--temp 0.4" && assert_contains "$result" "[llama.cpp.serve]"; then
+  if assert_contains "$result" "--temp 0.3" && assert_contains "$result" "[llama.cpp.serve]"; then
     pass 'builtin template code'
   else
     fail 'builtin template code' "got: $result"
