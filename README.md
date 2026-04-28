@@ -61,12 +61,12 @@ corral serve unsloth/gemma-4-26B-A4B-it-GGUF  # OpenAI-compatible API + web UI
 corral run unsloth/gemma-4-26B-A4B-it-GGUF -- -ngl 999 -c 8192  # Extra flags
 
 # Profiles: save a name + model + flags combo
-corral profile set coder unsloth/gemma-4-26B-A4B-it-GGUF -- \
+corral profile coder unsloth/gemma-4-26B-A4B-it-GGUF -- \
   --ctx-size 65536 --temp 0.2 -ngl 999
 corral run coder
 
 # Or seed a profile from a built-in template
-corral profile set mycoder code unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_M
+corral profile mycoder code unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_M
 corral run mycoder
 
 # Launch supported coding harnesses against a running server
@@ -90,9 +90,10 @@ corral remove coder
 | `search [QUERY]` | Search Hugging Face for compatible models |
 | `browse MODEL` | Open a model's Hugging Face page in the browser |
 | `list` / `ls` | List cached models, profiles, and templates |
-| `remove` / `rm` | Remove cached models or profiles |
-| `profile set\|duplicate` | Manage saved profiles |
-| `template set\|remove` | Manage flag templates |
+| `remove` / `rm` | Remove cached models, profiles, or user templates |
+| `profile NAME ...` | Create or replace a saved profile |
+| `template NAME ...` | Create or replace a user-defined template |
+| `copy` / `cp` | Copy a profile or template |
 | `show <NAME>` | Show details about a profile, template, or model |
 | `status` | Platform info and installed backend status |
 | `update` | Update backends to latest versions |
@@ -134,6 +135,7 @@ corral ls --backend mlx         # only MLX models
 corral remove USER/MODEL:QUANT  # remove one quant (llama.cpp)
 corral remove USER/MODEL        # remove entire model
 corral remove PROFILE_NAME      # remove a profile
+corral remove work-chat         # remove a user template
 ```
 
 ## Profiles and templates
@@ -141,7 +143,7 @@ corral remove PROFILE_NAME      # remove a profile
 A **profile** saves a model + flags under a name, usable anywhere a model is accepted:
 
 ```sh
-corral profile set coder unsloth/gemma-4-26B-A4B-it-GGUF -- \
+corral profile coder unsloth/gemma-4-26B-A4B-it-GGUF -- \
   --ctx-size 65536 --temp 0.2 -ngl 999
 
 corral run coder
@@ -157,24 +159,27 @@ A **template** is a reusable set of flags that can seed profiles. Corral ships t
 | `code` | Coding | `--temp 0.2` |
 
 ```sh
-corral profile set mycoder code unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_M   # from template
+corral profile mycoder code unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_M   # from template
 corral run mycoder
 ```
 
-Create custom templates with `corral template set`. If a template includes a `model=` line, the model is optional when creating profiles from it:
+Create custom templates with `corral template`. If a template includes a `model=` line, the model is optional when creating profiles from it:
 
 ```sh
-corral template set work-chat user/our-llm:Q4_K -- --temp 0.6 --ctx-size 16384
-corral profile set alice-chat work-chat          # model comes from template
-corral profile set test-chat work-chat user/new-llm:Q4_K  # override model
+corral template work-chat user/our-llm:Q4_K -- --temp 0.6 --ctx-size 16384
+corral profile alice-chat work-chat          # model comes from template
+corral profile test-chat work-chat user/new-llm:Q4_K  # override model
 ```
 
 ```sh
 corral show coder                            # Show profile details
 corral show --template chat                  # Show template details
 corral show unsloth/gemma-4-26B-A4B-it-GGUF  # Show model details
-corral profile duplicate coder coder2
-corral template remove work-chat             # delete user template
+corral copy coder coder2
+corral cp coder coder3              # alias
+corral copy chat chat-copy         # copy built-in template
+corral cp work-chat work-chat-2    # alias
+corral remove work-chat                     # delete user template
 ```
 
 ### Profile file format
@@ -211,7 +216,7 @@ model=unsloth/gemma-4-26B-A4B-it-GGUF
 | `[llama.cpp]` / `[mlx]` | One backend, any command |
 | `[llama.cpp.run]` / `[llama.cpp.serve]` / `[mlx.run]` / `[mlx.serve]` | One backend + one command |
 
-`profile set` creates flat profiles. Section headers are added by editing the file directly or inherited from templates. Templates use the same format (`model=` optional) and live in `~/.config/corral/templates/`. A user-defined template with the same name as a built-in takes precedence.
+`profile` creates flat profiles. Section headers are added by editing the file directly or inherited from templates. Templates use the same format (`model=` optional) and live in `~/.config/corral/templates/`. A user-defined template with the same name as a built-in takes precedence.
 
 ## Launch coding harnesses
 
