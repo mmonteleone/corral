@@ -16,6 +16,7 @@ MODULES=(
   "src/lib/corral-launch.sh"
   "src/lib/corral-search.sh"
   "src/lib/corral-completions.sh"
+  "src/lib/corral-show.sh"
 )
 
 # Derive version from the nearest git tag; fall back to "dev" for untagged builds.

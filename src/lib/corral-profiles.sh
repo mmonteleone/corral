@@ -128,7 +128,6 @@ cmd_profile_usage() {
   cat <<EOF
 Usage: $SCRIPT_NAME profile set <NAME> <MODEL_SPEC> [-- <flags...>]
        $SCRIPT_NAME profile set <NAME> <TEMPLATE> [<MODEL_SPEC>] [-- <flags...>]
-       $SCRIPT_NAME profile show <NAME>
        $SCRIPT_NAME profile duplicate <SOURCE> <DEST>
 
 Subcommands:
@@ -138,9 +137,6 @@ Subcommands:
   set <NAME> <TEMPLATE> [<MODEL_SPEC>] [-- <flags...>]
       Create or replace a named profile from a template. MODEL_SPEC is
       optional if the template includes a 'model=' line.
-
-  show <NAME>
-      Print the profile's model and flags.
 
   duplicate <SOURCE> <DEST>
       Copy an existing profile to a new name.
@@ -191,7 +187,6 @@ cmd_profile() {
 
   case "$subcmd" in
     set)             _cmd_profile_set "$@" ;;
-    show)            _cmd_profile_show "$@" ;;
     duplicate)       _cmd_profile_duplicate "$@" ;;
     -h|--help) cmd_profile_usage; return 0 ;;
     *)
@@ -204,14 +199,10 @@ cmd_profile() {
 
 cmd_template_usage() {
   cat <<EOF
-Usage: $SCRIPT_NAME template show <TEMPLATE>
-       $SCRIPT_NAME template set <TEMPLATE> [<MODEL_SPEC>] [-- <flags...>]
+Usage: $SCRIPT_NAME template set <TEMPLATE> [<MODEL_SPEC>] [-- <flags...>]
        $SCRIPT_NAME template remove <TEMPLATE>
 
 Subcommands:
-  show <TEMPLATE>
-      Print the content of a template.
-
   set <TEMPLATE> [<MODEL_SPEC>] [-- <flags...>]
       Create or replace a user-defined template. MODEL_SPEC is optional.
 
@@ -233,7 +224,6 @@ cmd_template() {
   shift
 
   case "$subcmd" in
-    show)            _cmd_template_show "$@" ;;
     set)             _cmd_template_set "$@" ;;
     remove|rm)       _cmd_template_remove "$@" ;;
     -h|--help) cmd_template_usage; return 0 ;;
@@ -481,22 +471,6 @@ _cmd_profile_set() {
   echo "Profile '${name}' saved."
 }
 
-_cmd_profile_show() {
-  if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
-    echo "Usage: $SCRIPT_NAME profile show <NAME>" >&2
-    [[ $# -eq 0 ]] && return 1 || return 0
-  fi
-
-  local name="$1"
-  _validate_profile_name "$name"
-
-  local path
-  path="$(profile_path "$name")"
-  [[ -f "$path" ]] || die "profile '${name}' not found"
-
-  cat "$path"
-}
-
 _cmd_profile_duplicate() {
   if [[ $# -lt 2 || "$1" == "-h" || "$1" == "--help" ]]; then
     echo "Usage: $SCRIPT_NAME profile duplicate <SOURCE> <DEST>" >&2
@@ -518,17 +492,6 @@ _cmd_profile_duplicate() {
 
   cp "$src_path" "$dst_path"
   echo "Profile '${src}' duplicated to '${dst}'."
-}
-
-_cmd_template_show() {
-  if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
-    echo "Usage: $SCRIPT_NAME template show <TEMPLATE>" >&2
-    [[ $# -eq 0 ]] && return 1 || return 0
-  fi
-
-  local name="$1"
-  _validate_template_name "$name"
-  _get_template_content "$name"
 }
 
 _cmd_template_set() {

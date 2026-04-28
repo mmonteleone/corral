@@ -3943,18 +3943,18 @@ test_profile_set_and_show() {
 
   pass 'profile set creates profile file'
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile show coder
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show coder
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'profile show prints profile' "profile show failed: $(cat "$stderr_file")"
+    fail 'show prints profile' "show failed: $(cat "$stderr_file")"
     return
   fi
 
   if ! assert_contains "$(cat "$stdout_file")" 'model=unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q6_K_XL'; then
-    fail 'profile show prints profile' "expected model line in show output"
+    fail 'show prints profile' "expected model line in show output"
     return
   fi
 
-  pass 'profile show prints profile'
+  pass 'show prints profile'
 }
 
 test_profile_removed_subcommands_error() {
@@ -4439,7 +4439,7 @@ test_profile_set_builtin_with_model() {
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile show mycoder
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show mycoder
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'profile set from builtin with model' "show failed: $(cat "$stderr_file")"
     return
@@ -4505,7 +4505,7 @@ test_profile_set_user_template() {
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile show myprofile
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show myprofile
   local content
   content="$(cat "$stdout_file")"
   if ! assert_contains "$content" "model=user/mymodel:Q4_K"; then
@@ -4539,9 +4539,9 @@ test_profile_set_template_overwrites_existing() {
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile show mypro
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show mypro
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'profile set template overwrites existing' "profile show failed: $(cat "$stderr_file")"
+    fail 'profile set template overwrites existing' "show failed: $(cat "$stderr_file")"
     return
   fi
 
@@ -4587,24 +4587,24 @@ test_template_show_builtin() {
 
   unset CORRAL_TEMPLATES_DIR
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template show code
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show code
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'template show builtin' "command failed: $(cat "$stderr_file")"
+    fail 'show builtin template' "command failed: $(cat "$stderr_file")"
     return
   fi
 
   local out
   out="$(cat "$stdout_file")"
   if ! assert_contains "$out" "--temp 0.3"; then
-    fail 'template show builtin' "expected '--temp 0.3' in code template, got: $out"
+    fail 'show builtin template' "expected '--temp 0.3' in code template, got: $out"
     return
   fi
   if ! assert_contains "$out" "-ngl all"; then
-    fail 'template show builtin' "expected '-ngl all' in code template, got: $out"
+    fail 'show builtin template' "expected '-ngl all' in code template, got: $out"
     return
   fi
 
-  pass 'template show builtin'
+  pass 'show builtin template'
 }
 
 test_template_set_and_show() {
@@ -4623,9 +4623,9 @@ test_template_set_and_show() {
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template show mywork
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show mywork
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'template set and show' "template-show failed: $(cat "$stderr_file")"
+    fail 'template set and show' "show failed: $(cat "$stderr_file")"
     return
   fi
 
@@ -4666,7 +4666,7 @@ test_template_remove() {
   fi
 
   # Subsequent show should fail.
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template show mytmp
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show mytmp
   if [[ $RUN_STATUS -eq 0 ]]; then
     fail 'template remove' "expected show to fail after removal"
     return
@@ -4707,9 +4707,9 @@ test_template_user_overrides_builtin() {
 --ctx-size 1024
 EOF
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template show code
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show code
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'profile user template overrides builtin' "template-show failed: $(cat "$stderr_file")"
+    fail 'profile user template overrides builtin' "show failed: $(cat "$stderr_file")"
     return
   fi
 
@@ -4726,6 +4726,308 @@ EOF
   fi
 
   pass 'profile user template overrides builtin'
+}
+
+# ── show command tests ────────────────────────────────────────────────────────
+
+test_show_profile_by_name() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
+  unset CORRAL_TEMPLATES_DIR
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set myprofile user/test-model:Q4_K -- --temp 0.5
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show profile by name' "profile set failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show myprofile
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show profile by name' "show failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" "model=user/test-model:Q4_K"; then
+    fail 'show profile by name' "expected model line, got: $out"
+    return
+  fi
+  if ! assert_contains "$out" "--temp 0.5"; then
+    fail 'show profile by name' "expected --temp 0.5, got: $out"
+    return
+  fi
+
+  pass 'show profile by name'
+}
+
+test_show_profile_explicit_flag() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
+  unset CORRAL_TEMPLATES_DIR
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set myprofile user/test-model:Q4_K -- --temp 0.5
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show profile explicit flag' "profile set failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --profile myprofile
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show profile explicit flag' "show failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" "model=user/test-model:Q4_K"; then
+    fail 'show profile explicit flag' "expected model line, got: $out"
+    return
+  fi
+
+  pass 'show profile explicit flag'
+}
+
+test_show_template_by_name() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  unset CORRAL_PROFILES_DIR
+  unset CORRAL_TEMPLATES_DIR
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show code
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show template by name' "show failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" "--temp 0.3"; then
+    fail 'show template by name' "expected --temp 0.3, got: $out"
+    return
+  fi
+  if ! assert_contains "$out" "-ngl all"; then
+    fail 'show template by name' "expected -ngl all, got: $out"
+    return
+  fi
+
+  pass 'show template by name'
+}
+
+test_show_template_explicit_flag() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  unset CORRAL_PROFILES_DIR
+  unset CORRAL_TEMPLATES_DIR
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --template code
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show template explicit flag' "show failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" "--temp 0.3"; then
+    fail 'show template explicit flag' "expected --temp 0.3, got: $out"
+    return
+  fi
+
+  pass 'show template explicit flag'
+}
+
+test_show_collision_requires_flag() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
+  export CORRAL_TEMPLATES_DIR="${HOME}/.config/corral/templates"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set collision user/test-model:Q4_K
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show collision' "profile set failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template set collision -- --temp 0.3
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show collision' "template set failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  # Without flag, should error about ambiguity.
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show collision
+  if [[ $RUN_STATUS -eq 0 ]]; then
+    fail 'show collision' "expected failure for ambiguous name"
+    return
+  fi
+  if ! assert_contains "$(cat "$stderr_file")" "ambiguous"; then
+    fail 'show collision' "expected 'ambiguous' in error, got: $(cat "$stderr_file")"
+    return
+  fi
+
+  # With --profile flag, should succeed.
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --profile collision
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show collision --profile' "show --profile failed: $(cat "$stderr_file")"
+    return
+  fi
+  if ! assert_contains "$(cat "$stdout_file")" "model=user/test-model:Q4_K"; then
+    fail 'show collision --profile' "expected profile content, got: $(cat "$stdout_file")"
+    return
+  fi
+
+  # With --template flag, should succeed.
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --template collision
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show collision --template' "show --template failed: $(cat "$stderr_file")"
+    return
+  fi
+  if ! assert_contains "$(cat "$stdout_file")" "--temp 0.3"; then
+    fail 'show collision --template' "expected template content, got: $(cat "$stdout_file")"
+    return
+  fi
+
+  pass 'show collision requires flag'
+}
+
+test_show_model_not_found() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  unset CORRAL_PROFILES_DIR
+  unset CORRAL_TEMPLATES_DIR
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --model nonexistent/model
+  if [[ $RUN_STATUS -eq 0 ]]; then
+    fail 'show model not found' "expected failure for nonexistent model"
+    return
+  fi
+  if ! assert_contains "$(cat "$stderr_file")" "not found"; then
+    fail 'show model not found' "expected 'not found' in error, got: $(cat "$stderr_file")"
+    return
+  fi
+
+  pass 'show model not found'
+}
+
+test_show_model_invalid_name() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  unset CORRAL_PROFILES_DIR
+  unset CORRAL_TEMPLATES_DIR
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --model invalidname
+  if [[ $RUN_STATUS -eq 0 ]]; then
+    fail 'show model invalid name' "expected failure for invalid model name"
+    return
+  fi
+  if ! assert_contains "$(cat "$stderr_file")" "does not look like"; then
+    fail 'show model invalid name' "expected 'does not look like' in error, got: $(cat "$stderr_file")"
+    return
+  fi
+
+  pass 'show model invalid name'
+}
+
+test_show_not_found() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  unset CORRAL_PROFILES_DIR
+  unset CORRAL_TEMPLATES_DIR
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show nonexistent_name
+  if [[ $RUN_STATUS -eq 0 ]]; then
+    fail 'show not found' "expected failure for nonexistent name"
+    return
+  fi
+  if ! assert_contains "$(cat "$stderr_file")" "not found"; then
+    fail 'show not found' "expected 'not found' in error, got: $(cat "$stderr_file")"
+    return
+  fi
+
+  pass 'show not found'
+}
+
+test_show_model_with_quants() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  unset CORRAL_PROFILES_DIR
+  unset CORRAL_TEMPLATES_DIR
+
+  # Use a known GGUF model that exists on HuggingFace.
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --model unsloth/gemma-4-26B-A4B-it-GGUF
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show model with quants' "show failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" "Model"; then
+    fail 'show model with quants' "expected 'Model' header, got: $out"
+    return
+  fi
+  if ! assert_contains "$out" "unsloth/gemma-4-26B-A4B-it-GGUF"; then
+    fail 'show model with quants' "expected model id, got: $out"
+    return
+  fi
+  if ! assert_contains "$out" "Available quants"; then
+    fail 'show model with quants' "expected 'Available quants' section, got: $out"
+    return
+  fi
+
+  pass 'show model with quants'
+}
+
+test_show_model_auto_resolve() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  unset CORRAL_PROFILES_DIR
+  unset CORRAL_TEMPLATES_DIR
+
+  # Model name contains '/' so it should auto-resolve to model.
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show unsloth/gemma-4-26B-A4B-it-GGUF
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show model auto resolve' "show failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" "unsloth/gemma-4-26B-A4B-it-GGUF"; then
+    fail 'show model auto resolve' "expected model id, got: $out"
+    return
+  fi
+
+  pass 'show model auto resolve'
+}
+
+test_show_missing_name() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show
+  if [[ $RUN_STATUS -eq 0 ]]; then
+    fail 'show missing name' "expected failure when no name given"
+    return
+  fi
+  if ! assert_contains "$(cat "$stderr_file")" "missing NAME"; then
+    fail 'show missing name' "expected 'missing NAME' in error, got: $(cat "$stderr_file")"
+    return
+  fi
+
+  pass 'show missing name'
 }
 
 # ── combined backend tests ────────────────────────────────────────────────────

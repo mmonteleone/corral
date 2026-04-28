@@ -80,6 +80,8 @@ source "${SCRIPT_DIR}/lib/corral-launch.sh"
 source "${SCRIPT_DIR}/lib/corral-search.sh"
 # shellcheck source=src/lib/corral-completions.sh
 source "${SCRIPT_DIR}/lib/corral-completions.sh"
+# shellcheck source=src/lib/corral-show.sh
+source "${SCRIPT_DIR}/lib/corral-show.sh"
 # END_GENERATED_MODULES
 
 # ── help ──────────────────────────────────────────────────────────────────────
@@ -104,6 +106,7 @@ Commands:
   serve <MODEL_NAME>   Download and serve a HuggingFace model (mlx or llama.cpp)
   launch <TOOL>        Configure and launch a supported coding harness
   ps                   Show running llama-cli / llama-server / mlx_lm.server processes
+  show <NAME>          Show details about a profile, template, or model
   profile              Manage named run/serve profiles
   template             Manage templates
   version (--version)  Show corral version
@@ -144,6 +147,7 @@ case "$COMMAND" in
   serve)       cmd_serve "$@" ;;
   launch)      cmd_launch "$@" ;;
   ps)          cmd_ps "$@" ;;
+  show)        cmd_show "$@" ;;
   profile)     cmd_profile "$@" ;;
   template)    cmd_template "$@" ;;
   versions)    cmd_versions "$@" ;;

@@ -91,8 +91,9 @@ corral remove coder
 | `browse MODEL` | Open a model's Hugging Face page in the browser |
 | `list` / `ls` | List cached models, profiles, and templates |
 | `remove` / `rm` | Remove cached models or profiles |
-| `profile set\|show\|duplicate` | Manage saved profiles |
-| `template show\|set\|remove` | Manage flag templates |
+| `profile set\|duplicate` | Manage saved profiles |
+| `template set\|remove` | Manage flag templates |
+| `show <NAME>` | Show details about a profile, template, or model |
 | `status` | Platform info and installed backend status |
 | `update` | Update backends to latest versions |
 | `versions` | Show installed backend versions |
@@ -169,10 +170,11 @@ corral profile set test-chat work-chat user/new-llm:Q4_K  # override model
 ```
 
 ```sh
-corral profile show coder            # inspect
+corral show coder                            # Show profile details
+corral show --template chat                  # Show template details
+corral show unsloth/gemma-4-26B-A4B-it-GGUF  # Show model details
 corral profile duplicate coder coder2
-corral template show code
-corral template remove work-chat     # delete user template
+corral template remove work-chat             # delete user template
 ```
 
 ### Profile file format
