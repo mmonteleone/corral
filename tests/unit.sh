@@ -1478,6 +1478,52 @@ test_collect_template_entries_includes_builtins() {
   fi
 }
 
+test_collect_template_entries_reads_only_templates_dir() {
+  local templates_dir="${TEST_ROOT}/templates-primary"
+  local profiles_dir="${TEST_ROOT}/profiles-dir"
+  mkdir -p "$templates_dir" "$profiles_dir/templates"
+  printf 'model=demo/current:Q4_K\n' > "${templates_dir}/current-tmpl"
+  printf 'model=demo/ignored:Q4_K\n' > "${profiles_dir}/templates/ignored-tmpl"
+
+  local saved_CORRAL_TEMPLATES_DIR="${CORRAL_TEMPLATES_DIR:-}"
+  local saved_CORRAL_PROFILES_DIR="${CORRAL_PROFILES_DIR:-}"
+  CORRAL_TEMPLATES_DIR="$templates_dir"
+  CORRAL_PROFILES_DIR="$profiles_dir"
+
+  local result
+  result="$(collect_template_entries)"
+
+  CORRAL_TEMPLATES_DIR="$saved_CORRAL_TEMPLATES_DIR"
+  CORRAL_PROFILES_DIR="$saved_CORRAL_PROFILES_DIR"
+
+  if assert_contains "$result" 'current-tmpl|user|demo/current:Q4_K' && \
+     ! assert_contains "$result" 'ignored-tmpl|user|demo/ignored:Q4_K'; then
+    pass 'collect_template_entries reads only templates dir'
+  else
+    fail 'collect_template_entries reads only templates dir' "got: $result"
+  fi
+}
+
+test_collect_template_entries_includes_model_less_user_templates() {
+  local templates_dir="${TEST_ROOT}/templates-model-less"
+  mkdir -p "$templates_dir"
+  printf '%s\n' '--temp 0.3' > "${templates_dir}/code2"
+
+  local saved_CORRAL_TEMPLATES_DIR="${CORRAL_TEMPLATES_DIR:-}"
+  CORRAL_TEMPLATES_DIR="$templates_dir"
+
+  local result
+  result="$(collect_template_entries)"
+
+  CORRAL_TEMPLATES_DIR="$saved_CORRAL_TEMPLATES_DIR"
+
+  if assert_contains "$result" 'code2|user|(none)'; then
+    pass 'collect_template_entries includes user templates without model lines'
+  else
+    fail 'collect_template_entries includes user templates without model lines' "got: $result"
+  fi
+}
+
 # ── completions_fish ─────────────────────────────────────────────────────────
 
 test_completions_fish_generation() {
@@ -1506,17 +1552,50 @@ test_completions_fish_profile_set_positionals() {
   local out
   out="$(completions_fish)"
 
-  if ! assert_contains "$out" 'complete -c corral -n "__corral_profile_set_needs_target" -a "(__corral_templates) (__corral_cached_models)"'; then
-    fail '_completions_fish completes profile set target from templates and models' 'expected profile set target completion line in generated fish script'
+  if ! assert_contains "$out" 'complete -c corral -n "__corral_profile_needs_target" -a "(__corral_templates) (__corral_cached_models)"'; then
+    fail '_completions_fish completes profile target from templates and models' 'expected profile target completion line in generated fish script'
     return
   fi
 
-  if ! assert_contains "$out" 'complete -c corral -n "__corral_profile_set_needs_model" -a "(__corral_cached_models)"'; then
-    fail '_completions_fish completes profile set model after template' 'expected profile set model completion line in generated fish script'
+  if ! assert_contains "$out" 'complete -c corral -n "__corral_profile_needs_model" -a "(__corral_cached_models)"'; then
+    fail '_completions_fish completes profile model after template' 'expected profile model completion line in generated fish script'
     return
   fi
 
-  pass '_completions_fish completes profile set template/model positionals'
+  pass '_completions_fish completes profile template/model positionals'
+}
+
+test_completions_include_copy_and_template_removal_targets() {
+  local fish_out zsh_out bash_out
+  fish_out="$(completions_fish)"
+  zsh_out="$(completions_zsh)"
+  bash_out="$(completions_bash)"
+
+  if assert_contains "$fish_out" 'complete -c corral -n "__fish_seen_subcommand_from copy cp"      -a "(__corral_copy_sources)"' && \
+     assert_contains "$fish_out" 'function __corral_copy_sources' && \
+     assert_contains "$fish_out" 'function __corral_removal_targets' && \
+     assert_contains "$fish_out" '__corral_templates'; then
+    pass '_completions_fish includes copy aliases and template removal targets'
+  else
+    fail '_completions_fish includes copy aliases and template removal targets' "got: $fish_out"
+  fi
+
+  if assert_contains "$zsh_out" "'copy:Copy a profile or template'" && \
+     assert_contains "$zsh_out" "'cp:Copy a profile or template'" && \
+     assert_contains "$zsh_out" "'templates:template:_corral_templates'" && \
+     assert_contains "$zsh_out" "'profile:Create or replace a named profile'"; then
+    pass '_completions_zsh includes copy aliases and template removal targets'
+  else
+    fail '_completions_zsh includes copy aliases and template removal targets' "got: $zsh_out"
+  fi
+
+  if assert_contains "$bash_out" 'copy|cp)' && \
+     assert_contains "$bash_out" 'COMPREPLY=($(compgen -W "$profiles_words $templates_words" -- "$cur"))' && \
+     assert_contains "$bash_out" 'removables_words="${models_words} ${profiles_words} ${templates_words}"'; then
+    pass '_completions_bash includes copy aliases and template removal targets'
+  else
+    fail '_completions_bash includes copy aliases and template removal targets' "got: $bash_out"
+  fi
 }
 
 test_completions_zsh_profile_template_filtering() {
@@ -1541,16 +1620,16 @@ test_completions_zsh_profile_set_positionals() {
   out="$(completions_zsh)"
 
   if ! assert_contains "$out" "_alternative 'templates:template:_corral_templates' 'models:model:_corral_cached_models'"; then
-    fail '_completions_zsh completes profile set target from templates and models' 'expected zsh profile set target completion alternative'
+    fail '_completions_zsh completes profile target from templates and models' 'expected zsh profile target completion alternative'
     return
   fi
 
-  if ! assert_contains "$out" "if _corral_has_template \"\$words[4]\"; then"; then
-    fail '_completions_zsh completes profile set model after template' 'expected zsh template-aware model completion block'
+  if ! assert_contains "$out" "if _corral_has_template \"\$words[3]\"; then"; then
+    fail '_completions_zsh completes profile model after template' 'expected zsh template-aware model completion block'
     return
   fi
 
-  pass '_completions_zsh completes profile set template/model positionals'
+  pass '_completions_zsh completes profile template/model positionals'
 }
 
 test_completions_bash_profile_template_filtering() {
@@ -1585,22 +1664,22 @@ test_completions_bash_profile_set_positionals() {
   local out
   out="$(completions_bash)"
 
-  if ! assert_contains "$out" "elif [[ \$COMP_CWORD -eq 4 ]]; then"; then
-    fail '_completions_bash completes profile set target from templates and models' 'expected bash target position branch for profile set'
+  if ! assert_contains "$out" "elif [[ \$COMP_CWORD -eq 3 ]]; then"; then
+    fail '_completions_bash completes profile target from templates and models' 'expected bash target position branch for profile'
     return
   fi
 
   if ! assert_contains "$out" "COMPREPLY=(\$(compgen -W \"\$templates_words \$models_words\" -- \"\$cur\"))"; then
-    fail '_completions_bash completes profile set target from templates and models' 'expected bash target completion list for profile set'
+    fail '_completions_bash completes profile target from templates and models' 'expected bash target completion list for profile'
     return
   fi
 
   if ! assert_contains "$out" "if [[ \$target_is_template -eq 1 ]]; then"; then
-    fail '_completions_bash completes profile set model after template' 'expected bash template-aware model completion block'
+    fail '_completions_bash completes profile model after template' 'expected bash template-aware model completion block'
     return
   fi
 
-  pass '_completions_bash completes profile set template/model positionals'
+  pass '_completions_bash completes profile template/model positionals'
 }
 
 run_selected_tests() {
@@ -1816,12 +1895,15 @@ else
   test_section_matches_backend_sections
   test_section_matches_compound_sections
   test_collect_template_entries_includes_builtins
+  test_collect_template_entries_reads_only_templates_dir
+  test_collect_template_entries_includes_model_less_user_templates
   test_render_merged_json_file_preserves_unrelated_keys
   test_render_merged_json_file_accepts_jsonc
   test_render_merged_json_file_migrates_pi_models_schema
   test_launch_tool_supports_process_matrix
   test_completions_fish_generation
   test_completions_fish_profile_set_positionals
+  test_completions_include_copy_and_template_removal_targets
   test_completions_include_launch
   test_completions_zsh_profile_template_filtering
   test_completions_zsh_profile_set_positionals

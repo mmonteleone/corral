@@ -80,6 +80,8 @@ source "${SCRIPT_DIR}/lib/corral-launch.sh"
 source "${SCRIPT_DIR}/lib/corral-search.sh"
 # shellcheck source=src/lib/corral-completions.sh
 source "${SCRIPT_DIR}/lib/corral-completions.sh"
+# shellcheck source=src/lib/corral-show.sh
+source "${SCRIPT_DIR}/lib/corral-show.sh"
 # END_GENERATED_MODULES
 
 # ── help ──────────────────────────────────────────────────────────────────────
@@ -90,22 +92,24 @@ Usage: $SCRIPT_NAME <command> [options]
 
 Commands:
   install              Install inference backend (mlx or llama.cpp; default: platform-detected)
+  run <MODEL_NAME>     Download and run a HuggingFace model (mlx or llama.cpp)
+  serve <MODEL_NAME>   Download and serve a HuggingFace model (mlx or llama.cpp)
+  launch <TOOL>        Configure and launch a supported coding harness
+  pull <MODEL_NAME>    Download (prefetch) model artifacts without running
+  search [QUERY]       Search Hugging Face models
+  browse <MODEL_NAME>  Open a model's HuggingFace page in your browser
+  list (ls)            List backend-scoped model cache entries plus profiles and templates
+  remove (rm)          Remove backend-scoped model cache entries, profiles, or user templates
+  profile              Create or replace a named run/serve profile
+  template             Create or replace a user-defined template
+  copy (cp)            Copy a profile to a new profile, or a template to a new user template
+  show <NAME>          Show details about a profile, template, or model
+  status               Show installed backend, platform, and version info
   update               Update backend components (llama.cpp release or mlx-lm package)
   versions             Show installed backend versions
   prune                Prune old llama.cpp installs (keeps current version)
   uninstall            Uninstall backend components and optional caches
-  status               Show installed backend, platform, and version info
-  search [QUERY]       Search Hugging Face models
-  browse <MODEL_NAME>  Open a model's HuggingFace page in your browser
-  pull <MODEL_NAME>    Download (prefetch) model artifacts without running
-  list (ls)            List backend-scoped model cache entries plus profiles and templates
-  remove (rm)          Remove backend-scoped model cache entries or a saved profile
-  run <MODEL_NAME>     Download and run a HuggingFace model (mlx or llama.cpp)
-  serve <MODEL_NAME>   Download and serve a HuggingFace model (mlx or llama.cpp)
-  launch <TOOL>        Configure and launch a supported coding harness
   ps                   Show running llama-cli / llama-server / mlx_lm.server processes
-  profile              Manage named run/serve profiles
-  template             Manage templates
   version (--version)  Show corral version
   help (h, ?)          Show this help
 
@@ -140,10 +144,12 @@ case "$COMMAND" in
   pull)        cmd_pull "$@" ;;
   list|ls)     cmd_list "$@" ;;
   remove|rm)   cmd_remove "$@" ;;
+  copy|cp)     cmd_copy "$@" ;;
   run)         cmd_run "$@" ;;
   serve)       cmd_serve "$@" ;;
   launch)      cmd_launch "$@" ;;
   ps)          cmd_ps "$@" ;;
+  show)        cmd_show "$@" ;;
   profile)     cmd_profile "$@" ;;
   template)    cmd_template "$@" ;;
   versions)    cmd_versions "$@" ;;

@@ -27,6 +27,7 @@ src/
     corral-inventory.sh      list/remove inventory across models, profiles, templates
     corral-launch.sh         launch integrations for pi and opencode
     corral-search.sh         Hugging Face search and browse
+    corral-show.sh           Unified 'show' command for profiles, templates, or models
     corral-completions.sh    fish/zsh/bash completion generators
   templates/                 Built-in profile templates
   launch/          Built-in launcher config templates

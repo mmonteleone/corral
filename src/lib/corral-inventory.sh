@@ -1,7 +1,7 @@
 # Inventory and removal helpers for corral.
 #
 # Builds the user-facing inventory across cache, profiles, and templates, and
-# owns removal flows for cached models and saved profiles. Provides:
+# owns removal flows for cached models, saved profiles, and user templates. Provides:
 #   - cmd_list (ls)
 #   - cmd_remove (rm)
 # shellcheck shell=bash
@@ -219,8 +219,8 @@ cmd_remove_usage() {
   cat <<EOF
 Usage: $SCRIPT_NAME remove [--backend <mlx|llama.cpp>] <MODEL_NAME>[:<QUANT>] [--force]
   $SCRIPT_NAME rm [--backend <mlx|llama.cpp>] <MODEL_NAME>[:<QUANT>] [--force]
-       $SCRIPT_NAME remove <PROFILE_NAME>
-       $SCRIPT_NAME rm <PROFILE_NAME>
+       $SCRIPT_NAME remove <PROFILE_NAME|TEMPLATE_NAME>
+       $SCRIPT_NAME rm <PROFILE_NAME|TEMPLATE_NAME>
 
 Arguments:
   MODEL_NAME    HuggingFace model identifier, e.g. unsloth/gemma-4-26B-A4B-it-GGUF
@@ -230,6 +230,7 @@ Arguments:
 Use '$SCRIPT_NAME list' to see available quant tags.
 
 Passing a profile name removes that saved profile.
+Passing a user template name removes that saved template.
 
 Deletes the locally cached model or quant variant. Refuses if the model is
 currently in use by llama-cli or llama-server.
@@ -271,6 +272,11 @@ cmd_remove() {
   # If TARGET has no model slash/quant suffix and matches an existing profile,
   # treat this as profile deletion for parity with model removal.
   if _remove_existing_profile_target "$target_spec"; then
+    return 0
+  fi
+
+  # Treat bare template names as removable user templates.
+  if _remove_existing_template_target "$target_spec"; then
     return 0
   fi
 
@@ -428,7 +434,7 @@ _parse_remove_args() {
   done
 
   if [[ -z "$REPLY_REMOVE_TARGET_SPEC" && "$REPLY_REMOVE_SHOW_HELP" != "true" ]]; then
-    REPLY_REMOVE_ERROR="missing model or profile target"
+    REPLY_REMOVE_ERROR="missing model, profile, or template target"
     return 1
   fi
 }
@@ -442,6 +448,26 @@ _remove_existing_profile_target() {
     if [[ -f "$profile_path" ]]; then
       remove_profile_by_name "$target_spec"
       return 0
+    fi
+  fi
+
+  return 1
+}
+
+_remove_existing_template_target() {
+  local target_spec="$1"
+
+  if [[ "$target_spec" != */* && "$target_spec" != *:* ]]; then
+    local template_path
+    template_path="$(_template_path "$target_spec")"
+    if [[ -f "$template_path" ]]; then
+      rm -f "$template_path"
+      echo "Template '${target_spec}' removed."
+      return 0
+    fi
+
+    if _get_builtin_template_content "$target_spec" >/dev/null 2>&1; then
+      die "cannot remove built-in template '${target_spec}'"
     fi
   fi
 

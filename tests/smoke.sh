@@ -1808,7 +1808,7 @@ test_profile_set_from_template_preserves_backend_sections() {
 --max-tokens 128
 EOF
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set testprof mixed some/model:Q4_K
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile testprof mixed some/model:Q4_K
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'profile set from template preserves backend sections' "set failed: $(cat "$stderr_file")"
     return
@@ -1843,7 +1843,7 @@ test_template_backend_sections_inherited_by_profile() {
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
 
   # Use the built-in 'code' template which now has [llama.cpp] and [llama.cpp.serve] sections.
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set testcoder code demo/model:Q4_K
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile testcoder code demo/model:Q4_K
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'template backend sections inherited by profile' "set failed: $(cat "$stderr_file")"
     return
@@ -1870,7 +1870,7 @@ test_template_set_preserves_backend_sections() {
   export CORRAL_TEMPLATES_DIR="${HOME}/.config/corral/templates"
   mkdir -p "$CORRAL_TEMPLATES_DIR"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template set mytemplate -- \
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template mytemplate -- \
     --temp 0.5
 
   if [[ $RUN_STATUS -ne 0 ]]; then
@@ -2796,7 +2796,7 @@ test_list_includes_profiles_and_models_sections() {
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
 
   create_gguf_fixture "models--demo--combo-GGUF" "combo-Q4_K_M.gguf" 1024
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set coder 'demo/combo-GGUF:Q4_K_M'
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile coder 'demo/combo-GGUF:Q4_K_M'
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'list includes model/profile sections' "profile set failed: $(cat "$stderr_file")"
     return
@@ -2833,7 +2833,7 @@ test_list_models_profiles_scopes() {
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
 
   create_gguf_fixture "models--demo--scope-GGUF" "scope-Q8_0.gguf" 1024
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set scoped 'demo/scope-GGUF:Q8_0'
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile scoped 'demo/scope-GGUF:Q8_0'
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'list scope flags filter sections' "profile set failed: $(cat "$stderr_file")"
     return
@@ -2877,7 +2877,7 @@ test_list_quiet_includes_profiles_and_sections() {
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
 
   create_gguf_fixture "models--demo--quietq-GGUF" "quietq-UD-Q6_K.gguf" 1024
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set jcoder 'demo/quietq-GGUF:UD-Q6_K'
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile jcoder 'demo/quietq-GGUF:UD-Q6_K'
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'list quiet include profiles and sections' "profile set failed: $(cat "$stderr_file")"
     return
@@ -2909,7 +2909,7 @@ test_list_includes_templates_section() {
 
   export CORRAL_TEMPLATES_DIR="${HOME}/.config/corral/templates"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template set mytmp user/tmpl-model:Q4_K -- --temp 0.5
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template mytmp user/tmpl-model:Q4_K -- --temp 0.5
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'list includes templates section' "template-set failed: $(cat "$stderr_file")"
     return
@@ -2945,7 +2945,7 @@ test_list_templates_scope() {
 
   export CORRAL_TEMPLATES_DIR="${HOME}/.config/corral/templates"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template set onlytmp user/tmpl-model:Q4_K -- --temp 0.5
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template onlytmp user/tmpl-model:Q4_K -- --temp 0.5
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'list --templates scopes output' "template-set failed: $(cat "$stderr_file")"
     return
@@ -2977,7 +2977,7 @@ test_list_quiet_includes_templates() {
 
   export CORRAL_TEMPLATES_DIR="${HOME}/.config/corral/templates"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template set quiettmp user/tmpl-model:Q4_K -- --temp 0.5
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template quiettmp user/tmpl-model:Q4_K -- --temp 0.5
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'list quiet include templates' "template-set failed: $(cat "$stderr_file")"
     return
@@ -3001,6 +3001,67 @@ test_list_quiet_includes_templates() {
   fi
 
   pass 'list quiet include templates'
+}
+
+test_list_includes_copied_builtin_template_without_model() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  export CORRAL_TEMPLATES_DIR="${HOME}/.config/corral/templates"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" cp code code2
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'list includes copied builtin template without model' "template copy failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" ls --templates
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'list includes copied builtin template without model' "list failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" 'code2' || ! assert_contains "$out" '(none)'; then
+    fail 'list includes copied builtin template without model' "expected copied template row with no default model, got: $out"
+    return
+  fi
+
+  pass 'list includes copied builtin template without model'
+}
+
+test_template_create_and_copy_use_templates_dir_only() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+  local current_templates_dir="${HOME}/.config/corral/templates"
+  local legacy_templates_dir="${HOME}/.config/corral/profiles/templates"
+
+  export CORRAL_TEMPLATES_DIR="$current_templates_dir"
+  mkdir -p "$legacy_templates_dir"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template onlycurrent user/current-model:Q4_K -- --temp 0.5
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'template create/copy use templates dir only' "template create failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" copy onlycurrent onlycurrent-copy
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'template create/copy use templates dir only' "template copy failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  if [[ ! -f "${current_templates_dir}/onlycurrent" || ! -f "${current_templates_dir}/onlycurrent-copy" ]]; then
+    fail 'template create/copy use templates dir only' 'expected created and copied templates in the current templates dir'
+    return
+  fi
+  if [[ -f "${legacy_templates_dir}/onlycurrent" || -f "${legacy_templates_dir}/onlycurrent-copy" ]]; then
+    fail 'template create/copy use templates dir only' 'did not expect templates to be written under the legacy profiles/templates dir'
+    return
+  fi
+
+  pass 'template create/copy use templates dir only'
 }
 
 test_remove_specific_quant() {
@@ -3911,7 +3972,7 @@ test_profile_set_and_show() {
 
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set coder \
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile coder \
     'unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q6_K_XL' -- \
     --ctx-size 65536 --n-predict 4096 --temp 0.2 -ngl 99
 
@@ -3943,49 +4004,18 @@ test_profile_set_and_show() {
 
   pass 'profile set creates profile file'
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile show coder
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show coder
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'profile show prints profile' "profile show failed: $(cat "$stderr_file")"
+    fail 'show prints profile' "show failed: $(cat "$stderr_file")"
     return
   fi
 
   if ! assert_contains "$(cat "$stdout_file")" 'model=unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q6_K_XL'; then
-    fail 'profile show prints profile' "expected model line in show output"
+    fail 'show prints profile' "expected model line in show output"
     return
   fi
 
-  pass 'profile show prints profile'
-}
-
-test_profile_removed_subcommands_error() {
-  local stdout_file="${TEST_DIR}/stdout"
-  local stderr_file="${TEST_DIR}/stderr"
-
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile list
-  if [[ $RUN_STATUS -eq 0 ]] || ! assert_contains "$(cat "$stderr_file")" 'Unknown profile subcommand'; then
-    fail 'removed profile subcommands error' "expected profile list to be rejected, got: $(cat "$stderr_file")"
-    return
-  fi
-
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile remove coder
-  if [[ $RUN_STATUS -eq 0 ]] || ! assert_contains "$(cat "$stderr_file")" 'Unknown profile subcommand'; then
-    fail 'removed profile subcommands error' "expected profile remove to be rejected, got: $(cat "$stderr_file")"
-    return
-  fi
-
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile templates
-  if [[ $RUN_STATUS -eq 0 ]] || ! assert_contains "$(cat "$stderr_file")" 'Unknown profile subcommand'; then
-    fail 'removed profile subcommands error' "expected profile templates to be rejected, got: $(cat "$stderr_file")"
-    return
-  fi
-
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile new coder code user/model
-  if [[ $RUN_STATUS -eq 0 ]] || ! assert_contains "$(cat "$stderr_file")" 'Unknown profile subcommand'; then
-    fail 'removed profile subcommands error' "expected profile new to be rejected, got: $(cat "$stderr_file")"
-    return
-  fi
-
-  pass 'removed profile subcommands error'
+  pass 'show prints profile'
 }
 
 test_remove_profile_via_top_level_remove() {
@@ -3994,7 +4024,7 @@ test_remove_profile_via_top_level_remove() {
 
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set coder 'demo/model:Q4_K'
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile coder 'demo/model:Q4_K'
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'remove/rm supports profile removal' "profile set failed: $(cat "$stderr_file")"
     return
@@ -4010,7 +4040,7 @@ test_remove_profile_via_top_level_remove() {
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set coder 'demo/model:Q4_K'
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile coder 'demo/model:Q4_K'
   run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" rm coder
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'remove/rm supports profile removal' "rm profile failed: $(cat "$stderr_file")"
@@ -4028,71 +4058,87 @@ test_profile_remove_missing_errors() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile remove nonexistent
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" remove nonexistent
   if [[ $RUN_STATUS -eq 0 ]]; then
-    fail 'profile remove subcommand removed' 'expected non-zero exit'
+    fail 'top-level remove missing profile errors' 'expected non-zero exit'
     return
   fi
 
-  if ! assert_contains "$(cat "$stderr_file")" 'Unknown profile subcommand'; then
-    fail 'profile remove subcommand removed' "expected unknown subcommand error, got: $(cat "$stderr_file")"
+  if ! assert_contains "$(cat "$stderr_file")" 'not found'; then
+    fail 'top-level remove missing profile errors' "expected not found error, got: $(cat "$stderr_file")"
     return
   fi
 
-  pass 'profile remove subcommand removed'
+  pass 'top-level remove missing profile errors'
 }
 
-test_profile_duplicate() {
+test_profile_copy() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
 
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set coder \
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile coder \
     'unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q6_K_XL' -- --ctx-size 65536 -ngl 99
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile duplicate coder coder-hi-ctx
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" copy coder coder-copy
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'profile duplicate copies profile' "profile duplicate failed: $(cat "$stderr_file")"
+    fail 'profile copy copies profile' "profile copy failed: $(cat "$stderr_file")"
     return
   fi
 
-  if [[ ! -f "${CORRAL_PROFILES_DIR}/coder-hi-ctx" ]]; then
-    fail 'profile duplicate copies profile' "expected destination profile file to exist"
+  if [[ ! -f "${CORRAL_PROFILES_DIR}/coder-copy" ]]; then
+    fail 'profile copy copies profile' "expected destination profile file to exist"
     return
   fi
 
-  if ! diff -q "${CORRAL_PROFILES_DIR}/coder" "${CORRAL_PROFILES_DIR}/coder-hi-ctx" >/dev/null 2>&1; then
-    fail 'profile duplicate copies profile' "expected source and destination to have identical contents"
+  if ! diff -q "${CORRAL_PROFILES_DIR}/coder" "${CORRAL_PROFILES_DIR}/coder-copy" >/dev/null 2>&1; then
+    fail 'profile copy copies profile' "expected source and destination to have identical contents"
     return
   fi
 
-  pass 'profile duplicate copies profile'
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" cp coder coder-cp
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'profile cp alias copies profile' "profile cp failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  if [[ ! -f "${CORRAL_PROFILES_DIR}/coder-cp" ]]; then
+    fail 'profile cp alias copies profile' "expected alias destination profile file to exist"
+    return
+  fi
+
+  if ! diff -q "${CORRAL_PROFILES_DIR}/coder" "${CORRAL_PROFILES_DIR}/coder-cp" >/dev/null 2>&1; then
+    fail 'profile cp alias copies profile' 'expected alias source and destination contents to match'
+    return
+  fi
+
+  pass 'profile copy copies profile and cp alias works'
 }
 
-test_profile_duplicate_dest_exists_errors() {
+test_profile_copy_dest_exists_errors() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
 
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set coder \
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile coder \
     'unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q6_K_XL'
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set coder2 \
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile coder2 \
     'unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_XL'
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile duplicate coder coder2
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" copy coder coder2
   if [[ $RUN_STATUS -eq 0 ]]; then
-    fail 'profile duplicate refuses overwrite' 'expected non-zero exit when destination exists'
+    fail 'profile copy refuses overwrite' 'expected non-zero exit when destination exists'
     return
   fi
 
   if ! assert_contains "$(cat "$stderr_file")" 'already exists'; then
-    fail 'profile duplicate refuses overwrite' "expected 'already exists' error, got: $(cat "$stderr_file")"
+    fail 'profile copy refuses overwrite' "expected 'already exists' error, got: $(cat "$stderr_file")"
     return
   fi
 
-  pass 'profile duplicate refuses overwrite'
+  pass 'profile copy refuses overwrite'
 }
 
 test_profile_invalid_name_errors() {
@@ -4101,7 +4147,7 @@ test_profile_invalid_name_errors() {
 
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set 'bad name' 'demo/model'
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile 'bad name' 'demo/model'
   if [[ $RUN_STATUS -eq 0 ]]; then
     fail 'profile set rejects invalid name' 'expected non-zero exit for name with space'
     return
@@ -4121,9 +4167,9 @@ test_profile_overwrite() {
 
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set coder \
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile coder \
     'unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q6_K_XL' -- --ctx-size 32768
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set coder \
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile coder \
     'unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q6_K_XL' -- --ctx-size 65536
 
   if [[ $RUN_STATUS -ne 0 ]]; then
@@ -4165,7 +4211,7 @@ EOF
   export CORRAL_RUN_ARGS_LOG="$run_args_log"
   unset HF_TOKEN HF_HUB_TOKEN HUGGING_FACE_HUB_TOKEN
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set coder \
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile coder \
     'unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q6_K_XL' -- \
     --ctx-size 65536 --temp 0.2 -ngl 99
 
@@ -4216,7 +4262,7 @@ EOF
   export CORRAL_SERVE_ARGS_LOG="$serve_args_log"
   unset HF_TOKEN HF_HUB_TOKEN HUGGING_FACE_HUB_TOKEN
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set coder \
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile coder \
     'unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q6_K_XL' -- \
     --ctx-size 65536 --temp 0.2 -ngl 99
 
@@ -4267,7 +4313,7 @@ EOF
   export CORRAL_SERVE_ARGS_LOG="$serve_args_log"
   unset HF_TOKEN HF_HUB_TOKEN HUGGING_FACE_HUB_TOKEN
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set coder \
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile coder \
     'unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q6_K_XL' -- \
     --ctx-size 65536 -ngl 99
 
@@ -4429,7 +4475,7 @@ test_profile_set_builtin_with_model() {
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
   unset CORRAL_TEMPLATES_DIR
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set mycoder code user/qwen2.5:Q4_K
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile mycoder code user/qwen2.5:Q4_K
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'profile set from builtin with model' "command failed: $(cat "$stderr_file")"
     return
@@ -4439,7 +4485,7 @@ test_profile_set_builtin_with_model() {
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile show mycoder
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show mycoder
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'profile set from builtin with model' "show failed: $(cat "$stderr_file")"
     return
@@ -4471,7 +4517,7 @@ test_profile_set_builtin_no_model_errors() {
   unset CORRAL_TEMPLATES_DIR
 
   # 'code' built-in has no model= line; no model arg provided → should error.
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set mycoder code
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile mycoder code
   if [[ $RUN_STATUS -eq 0 ]]; then
     fail 'profile set builtin no model errors' "expected failure when no model provided"
     return
@@ -4492,20 +4538,20 @@ test_profile_set_user_template() {
   export CORRAL_TEMPLATES_DIR="${HOME}/.config/corral/templates"
 
   # Create a user-defined template with a default model.
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template set mytemplate user/mymodel:Q4_K -- --temp 0.5 --ctx-size 4096
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template mytemplate user/mymodel:Q4_K -- --temp 0.5 --ctx-size 4096
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'profile set from user template' "template-set failed: $(cat "$stderr_file")"
     return
   fi
 
   # Create a profile from it (no model arg — should use template's default).
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set myprofile mytemplate
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile myprofile mytemplate
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'profile set from user template' "profile set failed: $(cat "$stderr_file")"
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile show myprofile
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show myprofile
   local content
   content="$(cat "$stdout_file")"
   if ! assert_contains "$content" "model=user/mymodel:Q4_K"; then
@@ -4527,21 +4573,21 @@ test_profile_set_template_overwrites_existing() {
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
   unset CORRAL_TEMPLATES_DIR
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set mypro user/original:Q4_K -- --temp 0.9
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile mypro user/original:Q4_K -- --temp 0.9
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'profile set template overwrites existing' "initial set failed: $(cat "$stderr_file")"
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile set mypro code user/updated:Q6_K
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile mypro code user/updated:Q6_K
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'profile set template overwrites existing' "overwrite set failed: $(cat "$stderr_file")"
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile show mypro
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show mypro
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'profile set template overwrites existing' "profile show failed: $(cat "$stderr_file")"
+    fail 'profile set template overwrites existing' "show failed: $(cat "$stderr_file")"
     return
   fi
 
@@ -4563,48 +4609,30 @@ test_profile_set_template_overwrites_existing() {
   pass 'profile set template overwrites existing'
 }
 
-test_profile_templates_subcommand_removed() {
-  local stdout_file="${TEST_DIR}/stdout"
-  local stderr_file="${TEST_DIR}/stderr"
-
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile templates
-  if [[ $RUN_STATUS -eq 0 ]]; then
-    fail 'profile templates subcommand removed' 'expected non-zero exit'
-    return
-  fi
-
-  if ! assert_contains "$(cat "$stderr_file")" 'Unknown profile subcommand'; then
-    fail 'profile templates subcommand removed' "expected unknown subcommand error, got: $(cat "$stderr_file")"
-    return
-  fi
-
-  pass 'profile templates subcommand removed'
-}
-
 test_template_show_builtin() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
 
   unset CORRAL_TEMPLATES_DIR
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template show code
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show code
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'template show builtin' "command failed: $(cat "$stderr_file")"
+    fail 'show builtin template' "command failed: $(cat "$stderr_file")"
     return
   fi
 
   local out
   out="$(cat "$stdout_file")"
   if ! assert_contains "$out" "--temp 0.3"; then
-    fail 'template show builtin' "expected '--temp 0.3' in code template, got: $out"
+    fail 'show builtin template' "expected '--temp 0.3' in code template, got: $out"
     return
   fi
   if ! assert_contains "$out" "-ngl all"; then
-    fail 'template show builtin' "expected '-ngl all' in code template, got: $out"
+    fail 'show builtin template' "expected '-ngl all' in code template, got: $out"
     return
   fi
 
-  pass 'template show builtin'
+  pass 'show builtin template'
 }
 
 test_template_set_and_show() {
@@ -4613,7 +4641,7 @@ test_template_set_and_show() {
 
   export CORRAL_TEMPLATES_DIR="${HOME}/.config/corral/templates"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template set mywork user/work-model -- --temp 0.3 --ctx-size 8192
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template mywork user/work-model -- --temp 0.3 --ctx-size 8192
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'template set and show' "template-set failed: $(cat "$stderr_file")"
     return
@@ -4623,9 +4651,9 @@ test_template_set_and_show() {
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template show mywork
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show mywork
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'template set and show' "template-show failed: $(cat "$stderr_file")"
+    fail 'template set and show' "show failed: $(cat "$stderr_file")"
     return
   fi
 
@@ -4643,55 +4671,125 @@ test_template_set_and_show() {
   pass 'template set and show'
 }
 
-test_template_remove() {
+test_template_copy() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
 
   export CORRAL_TEMPLATES_DIR="${HOME}/.config/corral/templates"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template set mytmp -- --temp 0.5
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template mytmp user/work-model -- --temp 0.5 --ctx-size 4096
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'template remove' "template-set failed: $(cat "$stderr_file")"
+    fail 'template copy' "template-set failed: $(cat "$stderr_file")"
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template remove mytmp
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" copy code code-copy
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'template remove' "template-remove failed: $(cat "$stderr_file")"
+    fail 'template copy' "template copy failed: $(cat "$stderr_file")"
     return
   fi
-  if ! assert_contains "$(cat "$stdout_file")" "removed"; then
-    fail 'template remove' "expected 'removed' message, got: $(cat "$stdout_file")"
+  if [[ ! -f "${CORRAL_TEMPLATES_DIR}/code-copy" ]]; then
+    fail 'template copy' 'expected copied built-in template file to exist'
     return
   fi
-
-  # Subsequent show should fail.
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template show mytmp
-  if [[ $RUN_STATUS -eq 0 ]]; then
-    fail 'template remove' "expected show to fail after removal"
+  if ! assert_contains "$(cat "${CORRAL_TEMPLATES_DIR}/code-copy")" '--temp 0.3'; then
+    fail 'template copy' 'expected built-in template content in copied file'
     return
   fi
 
-  pass 'template remove'
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" cp mytmp mytmp-copy
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'template cp alias copies template' "template cp failed: $(cat "$stderr_file")"
+    return
+  fi
+  if [[ ! -f "${CORRAL_TEMPLATES_DIR}/mytmp-copy" ]]; then
+    fail 'template cp alias copies template' 'expected copied user template file to exist'
+    return
+  fi
+  if ! diff -q "${CORRAL_TEMPLATES_DIR}/mytmp" "${CORRAL_TEMPLATES_DIR}/mytmp-copy" >/dev/null 2>&1; then
+    fail 'template cp alias copies template' 'expected source and destination template contents to match'
+    return
+  fi
+
+  pass 'template copy copies built-in/user templates and cp alias works'
 }
 
-test_template_remove_builtin_errors() {
+test_template_copy_dest_exists_errors() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  export CORRAL_TEMPLATES_DIR="${HOME}/.config/corral/templates"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template src-template user/model:Q4_K -- --temp 0.4
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template dst-template user/model:Q4_K -- --temp 0.6
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" copy src-template dst-template
+  if [[ $RUN_STATUS -eq 0 ]]; then
+    fail 'template copy refuses overwrite' 'expected non-zero exit when destination exists'
+    return
+  fi
+
+  if ! assert_contains "$(cat "$stderr_file")" 'already exists'; then
+    fail 'template copy refuses overwrite' "expected 'already exists' error, got: $(cat "$stderr_file")"
+    return
+  fi
+
+  pass 'template copy refuses overwrite'
+}
+
+test_remove_template_via_top_level_remove() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  export CORRAL_TEMPLATES_DIR="${HOME}/.config/corral/templates"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template work-chat user/work-model -- --temp 0.6
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'remove/rm supports template removal' "template set failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" remove work-chat
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'remove/rm supports template removal' "remove template failed: $(cat "$stderr_file")"
+    return
+  fi
+  if [[ -f "${CORRAL_TEMPLATES_DIR}/work-chat" ]]; then
+    fail 'remove/rm supports template removal' 'expected template file removed by top-level remove'
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template work-chat user/work-model -- --temp 0.6
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" rm work-chat
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'remove/rm supports template removal' "rm template failed: $(cat "$stderr_file")"
+    return
+  fi
+  if [[ -f "${CORRAL_TEMPLATES_DIR}/work-chat" ]]; then
+    fail 'remove/rm supports template removal' 'expected template file removed by top-level rm alias'
+    return
+  fi
+
+  pass 'remove/rm supports template removal'
+}
+
+test_remove_builtin_template_via_top_level_remove_errors() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
 
   unset CORRAL_TEMPLATES_DIR
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template remove chat
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" remove chat
   if [[ $RUN_STATUS -eq 0 ]]; then
-    fail 'template remove builtin errors' "expected failure when removing built-in template"
+    fail 'remove/rm rejects built-in template removal' 'expected non-zero exit for built-in template'
     return
   fi
   if ! assert_contains "$(cat "$stderr_file")" "built-in"; then
-    fail 'template remove builtin errors' "expected 'built-in' in error, got: $(cat "$stderr_file")"
+    fail 'remove/rm rejects built-in template removal' "expected built-in template error, got: $(cat "$stderr_file")"
     return
   fi
 
-  pass 'template remove builtin errors'
+  pass 'remove/rm rejects built-in template removal'
 }
 
 test_template_user_overrides_builtin() {
@@ -4707,9 +4805,9 @@ test_template_user_overrides_builtin() {
 --ctx-size 1024
 EOF
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template show code
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show code
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'profile user template overrides builtin' "template-show failed: $(cat "$stderr_file")"
+    fail 'profile user template overrides builtin' "show failed: $(cat "$stderr_file")"
     return
   fi
 
@@ -4726,6 +4824,308 @@ EOF
   fi
 
   pass 'profile user template overrides builtin'
+}
+
+# ── show command tests ────────────────────────────────────────────────────────
+
+test_show_profile_by_name() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
+  unset CORRAL_TEMPLATES_DIR
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile myprofile user/test-model:Q4_K -- --temp 0.5
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show profile by name' "profile set failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show myprofile
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show profile by name' "show failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" "model=user/test-model:Q4_K"; then
+    fail 'show profile by name' "expected model line, got: $out"
+    return
+  fi
+  if ! assert_contains "$out" "--temp 0.5"; then
+    fail 'show profile by name' "expected --temp 0.5, got: $out"
+    return
+  fi
+
+  pass 'show profile by name'
+}
+
+test_show_profile_explicit_flag() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
+  unset CORRAL_TEMPLATES_DIR
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile myprofile user/test-model:Q4_K -- --temp 0.5
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show profile explicit flag' "profile set failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --profile myprofile
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show profile explicit flag' "show failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" "model=user/test-model:Q4_K"; then
+    fail 'show profile explicit flag' "expected model line, got: $out"
+    return
+  fi
+
+  pass 'show profile explicit flag'
+}
+
+test_show_template_by_name() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  unset CORRAL_PROFILES_DIR
+  unset CORRAL_TEMPLATES_DIR
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show code
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show template by name' "show failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" "--temp 0.3"; then
+    fail 'show template by name' "expected --temp 0.3, got: $out"
+    return
+  fi
+  if ! assert_contains "$out" "-ngl all"; then
+    fail 'show template by name' "expected -ngl all, got: $out"
+    return
+  fi
+
+  pass 'show template by name'
+}
+
+test_show_template_explicit_flag() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  unset CORRAL_PROFILES_DIR
+  unset CORRAL_TEMPLATES_DIR
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --template code
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show template explicit flag' "show failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" "--temp 0.3"; then
+    fail 'show template explicit flag' "expected --temp 0.3, got: $out"
+    return
+  fi
+
+  pass 'show template explicit flag'
+}
+
+test_show_collision_requires_flag() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
+  export CORRAL_TEMPLATES_DIR="${HOME}/.config/corral/templates"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile collision user/test-model:Q4_K
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show collision' "profile set failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" template collision -- --temp 0.3
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show collision' "template set failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  # Without flag, should error about ambiguity.
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show collision
+  if [[ $RUN_STATUS -eq 0 ]]; then
+    fail 'show collision' "expected failure for ambiguous name"
+    return
+  fi
+  if ! assert_contains "$(cat "$stderr_file")" "ambiguous"; then
+    fail 'show collision' "expected 'ambiguous' in error, got: $(cat "$stderr_file")"
+    return
+  fi
+
+  # With --profile flag, should succeed.
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --profile collision
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show collision --profile' "show --profile failed: $(cat "$stderr_file")"
+    return
+  fi
+  if ! assert_contains "$(cat "$stdout_file")" "model=user/test-model:Q4_K"; then
+    fail 'show collision --profile' "expected profile content, got: $(cat "$stdout_file")"
+    return
+  fi
+
+  # With --template flag, should succeed.
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --template collision
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show collision --template' "show --template failed: $(cat "$stderr_file")"
+    return
+  fi
+  if ! assert_contains "$(cat "$stdout_file")" "--temp 0.3"; then
+    fail 'show collision --template' "expected template content, got: $(cat "$stdout_file")"
+    return
+  fi
+
+  pass 'show collision requires flag'
+}
+
+test_show_model_not_found() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  unset CORRAL_PROFILES_DIR
+  unset CORRAL_TEMPLATES_DIR
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --model nonexistent/model
+  if [[ $RUN_STATUS -eq 0 ]]; then
+    fail 'show model not found' "expected failure for nonexistent model"
+    return
+  fi
+  if ! assert_contains "$(cat "$stderr_file")" "not found"; then
+    fail 'show model not found' "expected 'not found' in error, got: $(cat "$stderr_file")"
+    return
+  fi
+
+  pass 'show model not found'
+}
+
+test_show_model_invalid_name() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  unset CORRAL_PROFILES_DIR
+  unset CORRAL_TEMPLATES_DIR
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --model invalidname
+  if [[ $RUN_STATUS -eq 0 ]]; then
+    fail 'show model invalid name' "expected failure for invalid model name"
+    return
+  fi
+  if ! assert_contains "$(cat "$stderr_file")" "does not look like"; then
+    fail 'show model invalid name' "expected 'does not look like' in error, got: $(cat "$stderr_file")"
+    return
+  fi
+
+  pass 'show model invalid name'
+}
+
+test_show_not_found() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  unset CORRAL_PROFILES_DIR
+  unset CORRAL_TEMPLATES_DIR
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show nonexistent_name
+  if [[ $RUN_STATUS -eq 0 ]]; then
+    fail 'show not found' "expected failure for nonexistent name"
+    return
+  fi
+  if ! assert_contains "$(cat "$stderr_file")" "not found"; then
+    fail 'show not found' "expected 'not found' in error, got: $(cat "$stderr_file")"
+    return
+  fi
+
+  pass 'show not found'
+}
+
+test_show_model_with_quants() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  unset CORRAL_PROFILES_DIR
+  unset CORRAL_TEMPLATES_DIR
+
+  # Use a known GGUF model that exists on HuggingFace.
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --model unsloth/gemma-4-26B-A4B-it-GGUF
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show model with quants' "show failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" "Model"; then
+    fail 'show model with quants' "expected 'Model' header, got: $out"
+    return
+  fi
+  if ! assert_contains "$out" "unsloth/gemma-4-26B-A4B-it-GGUF"; then
+    fail 'show model with quants' "expected model id, got: $out"
+    return
+  fi
+  if ! assert_contains "$out" "Available quants"; then
+    fail 'show model with quants' "expected 'Available quants' section, got: $out"
+    return
+  fi
+
+  pass 'show model with quants'
+}
+
+test_show_model_auto_resolve() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  unset CORRAL_PROFILES_DIR
+  unset CORRAL_TEMPLATES_DIR
+
+  # Model name contains '/' so it should auto-resolve to model.
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show unsloth/gemma-4-26B-A4B-it-GGUF
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'show model auto resolve' "show failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" "unsloth/gemma-4-26B-A4B-it-GGUF"; then
+    fail 'show model auto resolve' "expected model id, got: $out"
+    return
+  fi
+
+  pass 'show model auto resolve'
+}
+
+test_show_missing_name() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show
+  if [[ $RUN_STATUS -eq 0 ]]; then
+    fail 'show missing name' "expected failure when no name given"
+    return
+  fi
+  if ! assert_contains "$(cat "$stderr_file")" "missing NAME"; then
+    fail 'show missing name' "expected 'missing NAME' in error, got: $(cat "$stderr_file")"
+    return
+  fi
+
+  pass 'show missing name'
 }
 
 # ── combined backend tests ────────────────────────────────────────────────────
@@ -5191,6 +5591,12 @@ main() {
     test_list_quiet_includes_templates
 
     setup_test_env
+    test_list_includes_copied_builtin_template_without_model
+
+    setup_test_env
+    test_template_create_and_copy_use_templates_dir_only
+
+    setup_test_env
     test_remove_specific_quant
 
     setup_test_env
@@ -5269,19 +5675,22 @@ main() {
     test_profile_set_and_show
 
     setup_test_env
-    test_profile_removed_subcommands_error
+    test_remove_profile_via_top_level_remove
 
     setup_test_env
-    test_remove_profile_via_top_level_remove
+    test_remove_template_via_top_level_remove
+
+    setup_test_env
+    test_remove_builtin_template_via_top_level_remove_errors
 
     setup_test_env
     test_profile_remove_missing_errors
 
     setup_test_env
-    test_profile_duplicate
+    test_profile_copy
 
     setup_test_env
-    test_profile_duplicate_dest_exists_errors
+    test_profile_copy_dest_exists_errors
 
     setup_test_env
     test_profile_invalid_name_errors
@@ -5317,19 +5726,16 @@ main() {
     test_profile_set_template_overwrites_existing
 
     setup_test_env
-    test_profile_templates_subcommand_removed
-
-    setup_test_env
     test_template_show_builtin
 
     setup_test_env
+    test_template_copy
+
+    setup_test_env
+    test_template_copy_dest_exists_errors
+
+    setup_test_env
     test_template_set_and_show
-
-    setup_test_env
-    test_template_remove
-
-    setup_test_env
-    test_template_remove_builtin_errors
 
     setup_test_env
     test_template_user_overrides_builtin
