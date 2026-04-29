@@ -563,7 +563,7 @@ test_builtin_template_chat() {
 
 test_builtin_template_code() {
   local result
-  result="$(_get_builtin_template_content "code")"
+  result="$(_get_builtin_template_content "code-l")"
   if assert_contains "$result" "--temp 0.3" && assert_contains "$result" "[llama.cpp.serve]"; then
     pass 'builtin template code'
   else
@@ -1471,10 +1471,10 @@ test_section_matches_compound_sections() {
 test_collect_template_entries_includes_builtins() {
   local result
   result="$(collect_template_entries)"
-  if assert_contains "$result" "chat|built-in" && assert_contains "$result" "code|built-in"; then
-    pass 'collect_template_entries includes built-in chat and code'
+  if assert_contains "$result" "chat|built-in" && assert_contains "$result" "code-l|built-in" && assert_contains "$result" "code-s|built-in"; then
+    pass 'collect_template_entries includes built-in chat and code templates'
   else
-    fail 'collect_template_entries includes built-in chat and code' "got: $result"
+    fail 'collect_template_entries includes built-in chat and code templates' "got: $result"
   fi
 }
 
