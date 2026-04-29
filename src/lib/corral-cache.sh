@@ -3,7 +3,7 @@
 # Manages the local HuggingFace hub cache (~/.cache/huggingface/hub). Provides:
 #   - Public helpers: parse_model_spec(), cache_dir_has_gguf(),
 #     cache_dir_has_mlx_weights(), collect_cached_model_entries(),
-#     collect_mlx_model_entries(), find_cached_gguf_files(),
+#     collect_mlx_model_entries(), find_cached_gguf_files(), find_cached_gguf_paths(),
 #     find_cached_gguf_paths_by_quant(), find_gguf_by_quant(), remove_quant_files(),
 #     resolve_link(), model_name_to_cache_dir(), cache_dir_to_model_name()
 #   - Quant extraction: extract_quant_from_filename(), normalize_quant_tag()
@@ -11,7 +11,8 @@
 #   - MLX detection: cache_dir_has_mlx_weights() — positive match via safetensors/bin/pt
 #   - Cache dir conversion: model_name_to_cache_dir() ↔ cache_dir_to_model_name()
 #   - Entry collection: collect_cached_model_entries() (GGUF), collect_mlx_model_entries()
-#   - Private cache helpers: _cached_quant_tags(), _find_cached_gguf_paths()
+#   - Private cache helpers: _cached_quant_tags(), _find_cached_gguf_paths(),
+#     _is_auxiliary_gguf_filename()
 #
 # Entry format: pipe-delimited "name|quant|size|backend" rows consumed by inventory commands.
 # shellcheck shell=bash
@@ -69,7 +70,16 @@ normalize_quant_tag() {
   printf '%s\n' "$quant"
 }
 
-# Find cached GGUF files in a model's HF cache snapshots directory.
+# Find cached model GGUF file paths in a model's HF cache snapshots directory.
+# Auxiliary projector GGUFs (mmproj-*.gguf) are intentionally excluded; they are
+# sidecar files for multimodal models, not independently runnable quant variants.
+# Prints one full path per line, deduplicated and sorted.
+find_cached_gguf_paths() {
+  local cache_dir="$1"
+  _find_cached_gguf_paths "$cache_dir"
+}
+
+# Find cached model GGUF files in a model's HF cache snapshots directory.
 # Prints one basename per line, deduplicated and sorted.
 # 'while IFS= read -r': read one line at a time with no field-splitting (IFS=)
 # and no backslash interpretation (-r). This is the safe idiom for processing
@@ -80,7 +90,7 @@ find_cached_gguf_files() {
   while IFS= read -r f; do
     [[ -z "$f" ]] && continue
     basename "$f"
-  done < <(_find_cached_gguf_paths "$cache_dir") | sort -u
+  done < <(find_cached_gguf_paths "$cache_dir") | sort -u
 }
 
 # Find cached GGUF filenames whose extracted quant tag matches the given tag.
@@ -116,7 +126,7 @@ find_cached_gguf_paths_by_quant() {
     if [[ "$(normalize_quant_tag "$tag")" == "$normalized_quant" ]]; then
       printf '%s\n' "$path"
     fi
-  done < <(_find_cached_gguf_paths "$cache_dir")
+  done < <(find_cached_gguf_paths "$cache_dir")
 }
 
 # Resolve a symlink to its absolute target path using a subshell cd, avoiding
@@ -299,7 +309,7 @@ collect_cached_model_entries() {
   done
 }
 
-# Find cached GGUF file paths in a model's HF cache snapshots directory.
+# Find cached model GGUF file paths in a model's HF cache snapshots directory.
 # HuggingFace hub stores downloaded files under snapshots/<revision-hash>/.
 # A model may have multiple snapshot revisions, so we glob all of them.
 # Prints one full path per line, deduplicated and sorted.
@@ -312,8 +322,22 @@ _find_cached_gguf_paths() {
     [[ -d "$snapshot_dir" ]] || continue
     # -type l: also match symlinks, since HF hub stores GGUF files as symlinks
     # pointing to content-addressed blobs under blobs/.
-    find "$snapshot_dir" \( -type f -o -type l \) -name '*.gguf' -print
+    while IFS= read -r path; do
+      [[ -z "$path" ]] && continue
+      _is_auxiliary_gguf_filename "$(basename "$path")" && continue
+      printf '%s\n' "$path"
+    done < <(find "$snapshot_dir" \( -type f -o -type l \) -name '*.gguf' -print)
   done | sort -u
+}
+
+# Return success for GGUF sidecar files that should not be treated as model
+# quant variants. llama.cpp may automatically fetch mmproj-*.gguf projectors for
+# multimodal models; listing them as BF16/F16/F32 model quants is misleading.
+_is_auxiliary_gguf_filename() {
+  local filename="$1"
+  local lower
+  lower="$(printf '%s' "$filename" | tr '[:upper:]' '[:lower:]')"
+  [[ "$lower" == mmproj*.gguf ]]
 }
 
 # List the distinct quant tags present in a model's cache directory.

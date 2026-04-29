@@ -1193,6 +1193,11 @@ _cmd_pull() {
     return 0
   fi
 
+  local preexisting_gguf_paths=''
+  if [[ -n "$quant" && -d "$cache_dir" ]]; then
+    preexisting_gguf_paths="$(find_cached_gguf_paths "$cache_dir")"
+  fi
+
   echo "Pulling model: $model_spec"
   # Force a non-conversation single turn with a non-empty placeholder prompt so
   # llama-cli downloads into the HF cache and exits instead of entering chat
@@ -1213,6 +1218,9 @@ _cmd_pull() {
   llama-cli -hf "$model_spec" "${hf_args[@]+"${hf_args[@]}"}" --no-conversation --single-turn --prompt ' ' --no-display-prompt -n 0 </dev/null || pull_status=$?
 
   if cache_has_model_or_quant "$cache_dir" "$quant"; then
+    if [[ -n "$quant" ]]; then
+      _cleanup_unrequested_quant_pull_ggufs "$cache_dir" "$quant" "$preexisting_gguf_paths"
+    fi
     echo "Done: $model_spec"
     return 0
   fi
@@ -1305,6 +1313,41 @@ _infer_pull_backend() {
 }
 
 # Pull a model via mlx_lm.generate (MLX backend).
+# Remove newly downloaded GGUF files that do not match a quant-scoped pull.
+# Some repos include auxiliary GGUF artifacts (for example nested BF16 files)
+# that llama-cli may fetch alongside the requested quant. Preserve any GGUFs
+# that were already present before the pull, but remove newly added non-matching
+# files so `corral ls` reflects the explicitly requested quant.
+_cleanup_unrequested_quant_pull_ggufs() {
+  local cache_dir="$1"
+  local requested_quant="$2"
+  local preexisting_paths="${3:-}"
+  local current_path
+
+  while IFS= read -r current_path; do
+    [[ -z "$current_path" ]] && continue
+
+    if [[ -n "$preexisting_paths" ]] && grep -Fqx "$current_path" <<<"$preexisting_paths"; then
+      continue
+    fi
+
+    local tag
+    tag="$(extract_quant_from_filename "$(basename "$current_path")")"
+    if [[ "$(normalize_quant_tag "$tag")" == "$(normalize_quant_tag "$requested_quant")" ]]; then
+      continue
+    fi
+
+    if [[ -L "$current_path" ]]; then
+      local blob_path
+      blob_path="$(resolve_link "$current_path")"
+      if [[ -f "$blob_path" ]]; then
+        rm -f "$blob_path"
+      fi
+    fi
+    rm -f "$current_path"
+  done < <(find_cached_gguf_paths "$cache_dir")
+}
+
 _pull_mlx() {
   local input_spec="$1"
   local model_spec="$1"
