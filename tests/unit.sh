@@ -192,6 +192,23 @@ test_find_cached_gguf_files() {
   fi
 }
 
+test_find_cached_gguf_files_ignores_mmproj_sidecars() {
+  local cache_dir="${TEST_ROOT}/models--test--mmproj"
+  local snapshot_dir="${cache_dir}/snapshots/abc123"
+  mkdir -p "$snapshot_dir"
+  touch "${snapshot_dir}/model-Q4_K_M.gguf"
+  touch "${snapshot_dir}/mmproj-BF16.gguf"
+
+  local result
+  result="$(find_cached_gguf_files "$cache_dir")"
+  if assert_contains "$result" "model-Q4_K_M.gguf" && \
+     ! assert_contains "$result" "mmproj-BF16.gguf" 2>/dev/null; then
+    pass 'find_cached_gguf_files ignores mmproj sidecars'
+  else
+    fail 'find_cached_gguf_files ignores mmproj sidecars' "got: $result"
+  fi
+}
+
 # ── find_gguf_by_quant ──────────────────────────────────────────────────────
 
 test_find_gguf_by_quant_match() {
@@ -1821,6 +1838,7 @@ else
   test_model_name_to_cache_dir_invalid
   test_cache_dir_to_model_name
   test_find_cached_gguf_files
+  test_find_cached_gguf_files_ignores_mmproj_sidecars
   test_find_gguf_by_quant_match
   test_find_gguf_by_quant_case_insensitive
   test_cached_quant_tags

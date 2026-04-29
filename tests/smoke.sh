@@ -1087,6 +1087,63 @@ EOF
   pass 'pull quant ignores other cached quants'
 }
 
+test_pull_quant_cleans_up_new_unrequested_ggufs() {
+  local install_root="${HOME}/install-root"
+  local current_link="${install_root}/current"
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+  local model_spec='demo/test-GGUF:UD-Q4_K_XL'
+  local cache_dir="${HOME}/.cache/huggingface/hub/models--demo--test-GGUF"
+
+  mkdir -p "$current_link"
+
+  cat >"${current_link}/llama-cli" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p "$CORRAL_EXPECTED_CACHE_DIR/snapshots/def456/BF16"
+: >"$CORRAL_EXPECTED_CACHE_DIR/snapshots/def456/test-UD-Q4_K_XL.gguf"
+: >"$CORRAL_EXPECTED_CACHE_DIR/snapshots/def456/BF16/test-BF16-00001-of-00002.gguf"
+exit 0
+EOF
+  chmod +x "${current_link}/llama-cli"
+
+  export CORRAL_INSTALL_ROOT="$install_root"
+  export CORRAL_EXPECTED_CACHE_DIR="$cache_dir"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" pull "$model_spec"
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'pull quant cleans up new unrequested ggufs' "pull failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" ls --quiet --models
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'pull quant cleans up new unrequested ggufs' "ls failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+
+  if ! assert_contains "$out" 'demo/test-GGUF:UD-Q4_K_XL'; then
+    fail 'pull quant cleans up new unrequested ggufs' "expected requested quant in ls output, got: $out"
+    return
+  fi
+
+  if assert_contains "$out" 'demo/test-GGUF:BF16'; then
+    fail 'pull quant cleans up new unrequested ggufs' "expected BF16 helper gguf to be removed from ls output, got: $out"
+    return
+  fi
+
+  if ls "$cache_dir"/snapshots/*/BF16/test-BF16-00001-of-00002.gguf >/dev/null 2>&1; then
+    fail 'pull quant cleans up new unrequested ggufs' 'expected newly downloaded BF16 helper gguf to be removed from cache'
+    return
+  fi
+
+  pass 'pull quant cleans up new unrequested ggufs'
+}
+
 test_status_and_versions() {
   local install_root="${HOME}/install-root"
   local stdout_file="${TEST_DIR}/stdout"
@@ -3201,6 +3258,34 @@ test_list_detects_nested_snapshot_quant() {
   fi
 
   pass 'list detects quants in nested snapshot paths'
+}
+
+test_list_ignores_mmproj_sidecar_quants() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  create_gguf_fixture "models--demo--vision-GGUF" "vision-Q4_K_M.gguf" 2048
+  create_gguf_fixture "models--demo--vision-GGUF" "mmproj-BF16.gguf" 1024
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --quiet
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'list ignores mmproj sidecar quants' "list --quiet failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" 'demo/vision-GGUF:Q4_K_M'; then
+    fail 'list ignores mmproj sidecar quants' "expected model quant row, got: $out"
+    return
+  fi
+
+  if assert_contains "$out" 'demo/vision-GGUF:BF16'; then
+    fail 'list ignores mmproj sidecar quants' "did not expect mmproj BF16 sidecar row, got: $out"
+    return
+  fi
+
+  pass 'list ignores mmproj sidecar quants'
 }
 
 test_remove_quant_is_case_insensitive() {
@@ -5444,6 +5529,9 @@ main() {
     test_pull_quant_not_confused_by_other_cached_quant
 
     setup_test_env
+    test_pull_quant_cleans_up_new_unrequested_ggufs
+
+    setup_test_env
     test_status_and_versions
 
     setup_test_env
@@ -5610,6 +5698,9 @@ main() {
 
     setup_test_env
     test_list_detects_nested_snapshot_quant
+
+    setup_test_env
+    test_list_ignores_mmproj_sidecar_quants
 
     setup_test_env
     test_remove_quant_is_case_insensitive
