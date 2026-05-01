@@ -719,12 +719,36 @@ _status_llama() {
 
 # Print MLX installation status.
 _status_mlx() {
-  if command -v mlx_lm.generate >/dev/null 2>&1; then
+  if command -v mlx_lm.generate >/dev/null 2>&1 || command -v mlx_lm.chat >/dev/null 2>&1; then
     local version
     version="$(_mlx_lm_version)"
     echo "mlx-lm    : installed (${version})"
   else
     echo "mlx-lm    : not installed (run: $SCRIPT_NAME install --backend mlx)"
+  fi
+}
+
+# Emit installed engine rows for list output (no header).
+# Each row uses the format: ENGINE<TAB>VERSION
+# shellcheck disable=SC2329
+_emit_installed_engine_rows() {
+  local root="$1"
+  root="$(normalize_dir_path "$root")"
+
+  local current_link="${root}/current"
+  if [[ -L "$current_link" || -d "$current_link" ]]; then
+    local installed_tag='unknown'
+    if [[ -L "$current_link" ]]; then
+      installed_tag="$(basename "$(readlink "$current_link")")"
+      installed_tag="${installed_tag#llama-}"
+    fi
+    printf '%s\t%s\n' 'llama.cpp' "$installed_tag"
+  fi
+
+  if command -v mlx_lm.generate >/dev/null 2>&1 || command -v mlx_lm.chat >/dev/null 2>&1; then
+    local version
+    version="$(_mlx_lm_version)"
+    printf '%s\t%s\n' 'mlx-lm' "$version"
   fi
 }
 

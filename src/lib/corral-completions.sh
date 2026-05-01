@@ -39,8 +39,8 @@ complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a status    -d 
 complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a search    -d 'Search backend-compatible models'
 complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a browse    -d 'Open a model HuggingFace page in browser'
 complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a pull      -d 'Prefetch model artifacts'
-complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a list      -d 'List backend-scoped cached models'
-complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a ls        -d 'List backend-scoped cached models (alias)'
+complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a list      -d 'List cached models, installed engines, profiles, and templates'
+complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a ls        -d 'List cached models, installed engines, profiles, and templates (alias)'
 complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a remove    -d 'Remove backend-scoped model cache entry'
 complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a rm        -d 'Remove backend-scoped model cache entry (alias)'
 complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a copy      -d 'Copy a profile or template'
@@ -70,6 +70,7 @@ complete -c $sn -n "__fish_seen_subcommand_from list ls"     -l quiet           
 complete -c $sn -n "__fish_seen_subcommand_from list ls"     -l models           -d 'Show models only'
 complete -c $sn -n "__fish_seen_subcommand_from list ls"     -l profiles         -d 'Show profiles only'
 complete -c $sn -n "__fish_seen_subcommand_from list ls"     -l templates        -d 'Show templates only'
+complete -c $sn -n "__fish_seen_subcommand_from list ls"     -l engines          -d 'Show installed engines only'
 complete -c $sn -n "__fish_seen_subcommand_from search"      -l sort             -d 'Sort order (trending, downloads, newest)'
 complete -c $sn -n "__fish_seen_subcommand_from search"      -l limit            -d 'Maximum number of results'
 complete -c $sn -n "__fish_seen_subcommand_from search"      -l quants           -d 'Show available quant variants'
@@ -235,7 +236,7 @@ _corral() {
         'search:Search backend-compatible models'
         'browse:Open a model HuggingFace page in browser'
         'pull:Prefetch model artifacts'
-        'list:List backend-scoped cached models' 'ls:List backend-scoped cached models'
+        'list:List cached models, installed engines, profiles, and templates' 'ls:List cached models, installed engines, profiles, and templates'
         'remove:Remove backend-scoped model cache entry' 'rm:Remove backend-scoped model cache entry'
         'copy:Copy a profile or template' 'cp:Copy a profile or template'
         'run:Run a model (mlx or llama.cpp)'
@@ -288,7 +289,7 @@ _corral() {
         browse)
           _arguments '--print[Print URL instead of opening browser]' && _corral_cached_models ;;
         list|ls)
-          _arguments '--backend[Backend]:backend:(mlx llama.cpp)' '--quiet[Only print names]' '--models[Show models only]' '--profiles[Show profiles only]' '--templates[Show templates only]' ;;
+          _arguments '--backend[Backend]:backend:(mlx llama.cpp)' '--quiet[Only print names]' '--models[Show models only]' '--profiles[Show profiles only]' '--templates[Show templates only]' '--engines[Show installed engines only]' ;;
         remove|rm)
           _arguments '--backend[Backend]:backend:(mlx llama.cpp)' '--force[Skip confirmation prompt]' && _corral_removal_targets ;;
         copy|cp)
@@ -401,7 +402,7 @@ _${sn//-/_}_completions() {
       else
         COMPREPLY=(\$(compgen -W "\$models_words" -- "\$cur"))
       fi ;;
-    list|ls)  COMPREPLY=(\$(compgen -W "--backend --quiet --models --profiles --templates" -- "\$cur")) ;;
+    list|ls)  COMPREPLY=(\$(compgen -W "--backend --quiet --models --profiles --templates --engines" -- "\$cur")) ;;
     pull)
       if [[ "\$cur" == --* ]]; then
         COMPREPLY=(\$(compgen -W "--backend" -- "\$cur"))

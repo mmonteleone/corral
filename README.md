@@ -9,7 +9,8 @@ corral search gemma
 corral run unsloth/gemma-4-26B-A4B-it-GGUF
 corral launch pi
 ```
-
+![screenshot of corral's search command](./images/corral-search.png)
+![screenshot of corral's list command](./images/corral-list.png)
 ## Why Corral?
 
 - Upstream, official llama.cpp and MLX builds, with their latest performance benefits and model support (*ahem*, [Gemma 4](https://deepmind.google/models/gemma/gemma-4/)) vs downstream integrations and forks
@@ -73,7 +74,9 @@ corral run mycoder
 corral launch pi
 corral launch opencode
 
-corral list                                  # Models, profiles, templates
+# List models, installed engines, profiles, templates
+corral list
+
 corral remove unsloth/gemma-4-26B-A4B-it-GGUF
 corral remove coder
 ```
@@ -89,7 +92,7 @@ corral remove coder
 | `pull MODEL` | Download model artifacts without running |
 | `search [QUERY]` | Search Hugging Face for compatible models |
 | `browse MODEL` | Open a model's Hugging Face page in the browser |
-| `list` / `ls` | List cached models, profiles, and templates |
+| `list` / `ls` | List cached models, installed engines, profiles, and templates |
 | `remove` / `rm` | Remove cached models, profiles, or user templates |
 | `profile NAME ...` | Create or replace a saved profile |
 | `template NAME ...` | Create or replace a user-defined template |
@@ -129,8 +132,9 @@ corral search --backend llama.cpp qwen --quants    # show GGUF quant variants
 ### List and remove
 
 ```sh
-corral list                     # all models, profiles, templates
+corral list                     # all models, installed engines, profiles, templates
 corral ls --models              # only models
+corral ls --engines             # only installed engines
 corral ls --backend mlx         # only MLX models
 corral remove USER/MODEL:QUANT  # remove one quant (llama.cpp)
 corral remove USER/MODEL        # remove entire model

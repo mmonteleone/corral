@@ -8,10 +8,10 @@
 
 cmd_list_usage() {
   cat <<EOF
-Usage: $SCRIPT_NAME list [--backend <mlx|llama.cpp>] [--quiet] [--models] [--profiles] [--templates]
-  $SCRIPT_NAME ls   [--backend <mlx|llama.cpp>] [--quiet] [--models] [--profiles] [--templates]
+Usage: $SCRIPT_NAME list [--backend <mlx|llama.cpp>] [--quiet] [--models] [--profiles] [--templates] [--engines]
+  $SCRIPT_NAME ls   [--backend <mlx|llama.cpp>] [--quiet] [--models] [--profiles] [--templates] [--engines]
 
-Lists backend-scoped cached models plus saved profiles and templates.
+Lists backend-scoped cached models, installed engines, saved profiles, and templates.
 
 When multiple entry types are included, output is grouped into separate
 sections. For GGUF models, each downloaded quant variant is shown as a
@@ -23,7 +23,8 @@ Options:
   --models  Include only model entries.
   --profiles Include only profile entries.
   --templates Include only template entries.
-  --quiet   Print only model[:quant] identifiers, one per line. Useful for piping.
+  --engines Include only installed engine entries.
+  --quiet   Print only entry identifiers, one per line. For engines, prints engine<TAB>version.
 EOF
 }
 
@@ -44,6 +45,7 @@ cmd_list() {
   local SHOW_MODELS="$REPLY_LIST_SHOW_MODELS"
   local SHOW_PROFILES="$REPLY_LIST_SHOW_PROFILES"
   local SHOW_TEMPLATES="$REPLY_LIST_SHOW_TEMPLATES"
+  local SHOW_ENGINES="$REPLY_LIST_SHOW_ENGINES"
 
   local BACKEND="all"
   if [[ -n "$BACKEND_FLAG" ]]; then
@@ -53,6 +55,7 @@ cmd_list() {
   local model_entries=()
   local profile_entries=()
   local template_entries=()
+  local engine_entries=()
   local entry
 
   if [[ "$SHOW_MODELS" == "true" ]]; then
@@ -106,20 +109,32 @@ cmd_list() {
     fi
   fi
 
-  local model_count profile_count template_count
+  if [[ "$SHOW_ENGINES" == "true" ]]; then
+    while IFS= read -r entry; do
+      [[ -z "$entry" ]] && continue
+      engine_entries+=("$entry")
+    done < <(_emit_installed_engine_rows "$DEFAULT_INSTALL_ROOT")
+  fi
+
+  local model_count profile_count template_count engine_count
   model_count=${#model_entries[@]}
   profile_count=${#profile_entries[@]}
   template_count=${#template_entries[@]}
+  engine_count=${#engine_entries[@]}
 
-  if [[ "$model_count" -eq 0 && "$profile_count" -eq 0 && "$template_count" -eq 0 ]]; then
-    if [[ "$SHOW_MODELS" == "true" && "$SHOW_PROFILES" == "true" && "$SHOW_TEMPLATES" == "true" ]]; then
-      echo "No models, profiles, or templates found."
+  if [[ "$model_count" -eq 0 && "$profile_count" -eq 0 && "$template_count" -eq 0 && "$engine_count" -eq 0 ]]; then
+    if [[ "$SHOW_MODELS" == "true" && "$SHOW_PROFILES" == "true" && "$SHOW_TEMPLATES" == "true" && "$SHOW_ENGINES" == "true" ]]; then
+      echo "No models, engines, profiles, or templates found."
     elif [[ "$SHOW_MODELS" == "true" ]]; then
       echo "No models found."
-    elif [[ "$SHOW_PROFILES" == "true" ]]; then
+    elif [[ "$SHOW_ENGINES" == "true" && "$SHOW_PROFILES" == "false" && "$SHOW_TEMPLATES" == "false" ]]; then
+      echo "No installed engines found."
+    elif [[ "$SHOW_PROFILES" == "true" && "$SHOW_TEMPLATES" == "false" ]]; then
       echo "No profiles found."
-    else
+    elif [[ "$SHOW_TEMPLATES" == "true" && "$SHOW_PROFILES" == "false" ]]; then
       echo "No templates found."
+    else
+      echo "No matching entries found."
     fi
     return 0
   fi
@@ -157,6 +172,13 @@ cmd_list() {
         echo "$tname"
       done
     fi
+
+    if [[ "$engine_count" -gt 0 ]]; then
+      local e
+      for e in "${engine_entries[@]}"; do
+        printf '%s\n' "$e"
+      done
+    fi
   else
     if [[ "$model_count" -gt 0 ]]; then
       local color_model_sizes="false"
@@ -185,8 +207,13 @@ cmd_list() {
       } | print_tsv_table 'lll' $'MODEL\tBACKEND\tSIZE'
     fi
 
-    if [[ "$profile_count" -gt 0 ]]; then
+    if [[ "$engine_count" -gt 0 ]]; then
       [[ "$model_count" -gt 0 ]] && echo
+      printf '%s\n' "${engine_entries[@]}" | print_tsv_table 'll' $'ENGINE\tVERSION'
+    fi
+
+    if [[ "$profile_count" -gt 0 ]]; then
+      [[ "$model_count" -gt 0 || "$engine_count" -gt 0 ]] && echo
       {
         local e
         for e in "${profile_entries[@]}"; do
@@ -199,7 +226,7 @@ cmd_list() {
     fi
 
     if [[ "$template_count" -gt 0 ]]; then
-      [[ "$model_count" -gt 0 || "$profile_count" -gt 0 ]] && echo
+      [[ "$model_count" -gt 0 || "$engine_count" -gt 0 || "$profile_count" -gt 0 ]] && echo
       {
         local e
         for e in "${template_entries[@]}"; do
@@ -336,6 +363,7 @@ _enable_list_scope() {
     REPLY_LIST_SHOW_MODELS="false"
     REPLY_LIST_SHOW_PROFILES="false"
     REPLY_LIST_SHOW_TEMPLATES="false"
+    REPLY_LIST_SHOW_ENGINES="false"
     REPLY_LIST_SCOPE_SET="true"
   fi
 
@@ -343,6 +371,7 @@ _enable_list_scope() {
     models) REPLY_LIST_SHOW_MODELS="true" ;;
     profiles) REPLY_LIST_SHOW_PROFILES="true" ;;
     templates) REPLY_LIST_SHOW_TEMPLATES="true" ;;
+    engines) REPLY_LIST_SHOW_ENGINES="true" ;;
   esac
 }
 
@@ -352,6 +381,7 @@ _parse_list_args() {
   REPLY_LIST_SHOW_MODELS="true"
   REPLY_LIST_SHOW_PROFILES="true"
   REPLY_LIST_SHOW_TEMPLATES="true"
+  REPLY_LIST_SHOW_ENGINES="true"
   REPLY_LIST_SCOPE_SET="false"
   REPLY_LIST_SHOW_HELP="false"
   REPLY_LIST_ERROR=""
@@ -381,6 +411,10 @@ _parse_list_args() {
         ;;
       --templates)
         _enable_list_scope templates
+        shift
+        ;;
+      --engines)
+        _enable_list_scope engines
         shift
         ;;
       -h|--help)
