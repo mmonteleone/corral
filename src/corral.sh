@@ -98,7 +98,7 @@ Commands:
   pull <MODEL_NAME>    Download (prefetch) model artifacts without running
   search [QUERY]       Search Hugging Face models
   browse <MODEL_NAME>  Open a model's HuggingFace page in your browser
-  list (ls)            List backend-scoped model cache entries plus profiles and templates
+  list (ls)            List cached models, installed engines, profiles, and templates
   remove (rm)          Remove backend-scoped model cache entries, profiles, or user templates
   profile              Create or replace a named run/serve profile
   template             Create or replace a user-defined template

@@ -2852,6 +2852,9 @@ test_list_includes_profiles_and_models_sections() {
 
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
 
+  mkdir -p "${HOME}/.llama.cpp/llama-b1001"
+  ln -sfn "${HOME}/.llama.cpp/llama-b1001" "${HOME}/.llama.cpp/current"
+
   create_gguf_fixture "models--demo--combo-GGUF" "combo-Q4_K_M.gguf" 1024
   run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile coder 'demo/combo-GGUF:Q4_K_M'
   if [[ $RUN_STATUS -ne 0 ]]; then
@@ -2867,8 +2870,8 @@ test_list_includes_profiles_and_models_sections() {
 
   local out
   out="$(cat "$stdout_file")"
-  if ! assert_contains "$out" 'MODEL' || ! assert_contains "$out" 'PROFILE'; then
-    fail 'list includes model/profile sections' "expected MODEL and PROFILE sections, got: $out"
+  if ! assert_contains "$out" 'MODEL' || ! assert_contains "$out" 'ENGINE' || ! assert_contains "$out" 'PROFILE'; then
+    fail 'list includes model/profile sections' "expected MODEL, ENGINE, and PROFILE sections, got: $out"
     return
   fi
   if ! assert_contains "$out" 'demo/combo-GGUF:Q4_K_M'; then
@@ -2877,6 +2880,10 @@ test_list_includes_profiles_and_models_sections() {
   fi
   if ! assert_contains "$out" 'coder'; then
     fail 'list includes model/profile sections' "expected profile row, got: $out"
+    return
+  fi
+  if ! assert_contains "$out" 'llama.cpp' || ! assert_contains "$out" 'b1001'; then
+    fail 'list includes model/profile sections' "expected installed engine row, got: $out"
     return
   fi
 
@@ -2925,6 +2932,66 @@ test_list_models_profiles_scopes() {
   fi
 
   pass 'list scope flags filter sections'
+}
+
+test_list_engines_scope_and_quiet_model_scopes_exclude_engines() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+  local install_root="${HOME}/.llama.cpp"
+
+  mkdir -p "${install_root}/llama-b1001"
+  ln -sfn "${install_root}/llama-b1001" "${install_root}/current"
+  create_gguf_fixture "models--demo--engine-scope-GGUF" "engine-scope-Q4_K_M.gguf" 1024
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --engines
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'list --engines shows installed backends' "list --engines failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" 'ENGINE' || ! assert_contains "$out" 'llama.cpp' || ! assert_contains "$out" 'b1001'; then
+    fail 'list --engines shows installed backends' "expected installed engine row, got: $out"
+    return
+  fi
+  if assert_contains "$out" 'MODEL'; then
+    fail 'list --engines scopes output' "did not expect model table in --engines output, got: $out"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --quiet --models
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'list quiet model scope excludes engines' "list --quiet --models failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" 'demo/engine-scope-GGUF:Q4_K_M'; then
+    fail 'list quiet model scope excludes engines' "expected model entry, got: $out"
+    return
+  fi
+  if assert_contains "$out" 'llama.cpp'; then
+    fail 'list quiet model scope excludes engines' "did not expect engine row in model-scoped quiet output, got: $out"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --engines
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'list --engines omits non-installed backends' "list --engines failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  out="$(cat "$stdout_file")"
+  if assert_contains "$out" 'mlx-lm'; then
+    fail 'list --engines omits non-installed backends' "did not expect non-installed mlx row, got: $out"
+    return
+  fi
+
+  pass 'list --engines shows installed backends'
+  pass 'list --engines scopes output'
+  pass 'list quiet model scope excludes engines'
+  pass 'list --engines omits non-installed backends'
 }
 
 test_list_quiet_includes_profiles_and_sections() {
@@ -5665,6 +5732,9 @@ main() {
 
     setup_test_env
     test_list_models_profiles_scopes
+
+    setup_test_env
+    test_list_engines_scope_and_quiet_model_scopes_exclude_engines
 
     setup_test_env
     test_list_quiet_includes_profiles_and_sections
