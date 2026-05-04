@@ -13,63 +13,7 @@ emit_runtime_process_rows() {
   # Detect target processes from the command name or early executable/script
   # tokens in args. Limiting fallback to the first command-like fields avoids
   # self-matching awk script text that may mention llama/port flags.
-  { ps -eo pid=,comm=,args= -ww 2>/dev/null || ps -ax -o pid=,comm=,args= -ww 2>/dev/null; } | awk '
-    {
-      pid = $1
-      proc = $2
-      matched = ""
-
-      if (proc ~ /^llama-(cli|server)$/ || proc == "mlx_lm.server" || proc == "mlx_lm.chat") {
-        matched = proc
-      } else {
-        for (i = 3; i <= NF && i <= 4; i++) {
-          if ($i ~ /^-/) {
-            break
-          }
-
-          token = $i
-          sub(/^.*\//, "", token)
-
-          if (token ~ /^llama-(cli|server)$/ || token == "mlx_lm.server" || token == "mlx_lm.chat") {
-            matched = token
-            break
-          }
-        }
-      }
-
-      if (matched == "") {
-        next
-      }
-
-      proc = matched
-
-      model = "(unknown)"
-      port = "-"
-
-      for (i = 3; i <= NF; i++) {
-        if (($i == "-hf" || $i == "--hf" || $i == "--model") && i < NF) {
-          model = $(i + 1)
-        } else if (($i == "-p" || $i == "--port") && i < NF) {
-          port = $(i + 1)
-        } else if ($i ~ /^--port=/) {
-          split($i, parts, "=")
-          port = parts[2]
-        } else if ($i ~ /^-p[0-9]+$/) {
-          port = substr($i, 3)
-        }
-      }
-
-      sub(/^.*\//, "", proc)
-      if (proc != "llama-server" && proc != "mlx_lm.server") {
-        port = "-"
-      } else if (port == "-") {
-        # llama-server and mlx_lm.server default to port 8080 when --port is not explicitly given.
-        port = "8080"
-      }
-
-      printf "%s\t%s\t%s\t%s\n", pid, proc, port, model
-    }
-  '
+  { ps -eo pid=,comm=,args= -ww 2>/dev/null || ps -ax -o pid=,comm=,args= -ww 2>/dev/null; } | awk "$(_emit_runtime_process_rows_awk)"
 }
 
 # Check whether any running llama-cli or llama-server process has open files
@@ -172,5 +116,16 @@ cmd_ps() {
     return 0
   fi
 
-  print_tsv_table 'llll' $'PID\tPROCESS\tPORT\tMODEL' <<< "$ps_output"
+  print_tsv_table 'llllll' $'PID\tPROCESS\tPORT\tMODEL\tCONTEXT\tMAX_TOKENS' <<< "$ps_output"
+}
+
+# Print the awk program used by emit_runtime_process_rows().
+# In source mode this reads src/awk/processes.awk from disk; tools/build.sh
+# replaces the marked block with an inlined heredoc in standalone builds.
+_emit_runtime_process_rows_awk() {
+# BEGIN_PROCESSES_AWK
+  local awk_path
+  awk_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../awk/processes.awk"
+  cat "$awk_path"
+# END_PROCESSES_AWK
 }

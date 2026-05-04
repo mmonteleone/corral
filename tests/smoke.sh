@@ -381,10 +381,10 @@ set -euo pipefail
 if [[ "$*" == *"pid=,comm=,args="* ]]; then
   cat <<'OUT'
 26366 awk awk { # llama-server and mlx_lm.server default to port 8080 when --port is not explicitly given; if ($i == "-p") port = "is" }
-31111 llama-server /tmp/install/current/llama-server -hf demo/server-model --port 9000
+31111 llama-server /tmp/install/current/llama-server -hf demo/server-model --ctx-size 131072 --n-predict 8192 --port 9000
 32222 llama-cli /tmp/install/current/llama-cli -hf demo/cli-model
 33332 Python /opt/homebrew/bin/python /opt/homebrew/bin/mlx_lm.chat --model mlx-community/Qwen2.5-7B-Instruct-4bit
-33333 mlx_lm.server /opt/homebrew/bin/mlx_lm.server --model mlx-community/Qwen2.5-7B-Instruct-4bit --port 8082
+33333 mlx_lm.server /opt/homebrew/bin/mlx_lm.server --model mlx-community/Qwen2.5-7B-Instruct-4bit --max-tokens 2048 --port 8082
 OUT
   exit 0
 fi
@@ -449,12 +449,34 @@ test_generated_standalone_script() {
     return
   fi
 
+  # shellcheck disable=SC2016
+  if grep -q 'awk_path="$(cd "$(dirname "${BASH_SOURCE\[0\]}")" && pwd)/../awk/' "$generated_script"; then
+    fail 'generated standalone script inlines awk assets' 'expected standalone script to inline awk scripts instead of reading src/awk/ at runtime'
+    return
+  fi
+
+  if ! grep -q 'llama-(cli|server)' "$generated_script"; then
+    fail 'generated standalone script inlines awk assets' 'expected standalone script to include embedded processes awk'
+    return
+  fi
+
+  if ! grep -q 'in_string' "$generated_script"; then
+    fail 'generated standalone script inlines awk assets' 'expected standalone script to include embedded jsonc awk'
+    return
+  fi
+
+  if ! grep -q 'visible_length' "$generated_script"; then
+    fail 'generated standalone script inlines awk assets' 'expected standalone script to include embedded table awk'
+    return
+  fi
+
   run_cmd "$stdout_file" "$stderr_file" bash "$generated_script" help
   if [[ $RUN_STATUS -eq 0 ]] && assert_contains "$(cat "$stdout_file")" 'Commands:'; then
     pass 'generated standalone script builds'
     pass 'generated standalone script is self-contained'
     pass 'generated standalone script inlines launch templates'
     pass 'generated standalone script inlines search jq asset'
+    pass 'generated standalone script inlines awk assets'
   else
     fail 'generated standalone script is self-contained' "expected generated script to run standalone help successfully: $(cat "$stderr_file")"
   fi
@@ -1462,7 +1484,7 @@ EOF
 }
 EOF
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" launch --port 8082 pi -- --resume last
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" launch --port 9000 pi -- --resume last
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'launch pi updates config and launches tool' "launch pi failed: $(cat "$stderr_file")"
     return
@@ -1470,11 +1492,13 @@ EOF
 
   if ! assert_contains "$(cat "$settings_path")" '"packages"' || \
      ! assert_contains "$(cat "$settings_path")" '"defaultProvider": "corral-launch"' || \
-     ! assert_contains "$(cat "$settings_path")" '"defaultModel": "mlx-community/Qwen2.5-7B-Instruct-4bit"' || \
+     ! assert_contains "$(cat "$settings_path")" '"defaultModel": "demo/server-model"' || \
       ! assert_contains "$(cat "$models_path")" '"providers"' || \
      ! assert_contains "$(cat "$models_path")" '"existing"' || \
-     ! assert_contains "$(cat "$models_path")" '"baseUrl": "http://127.0.0.1:8082/v1"' || \
-      ! assert_contains "$(cat "$models_path")" '"id": "mlx-community/Qwen2.5-7B-Instruct-4bit"' || \
+     ! assert_contains "$(cat "$models_path")" '"baseUrl": "http://127.0.0.1:9000/v1"' || \
+      ! assert_contains "$(cat "$models_path")" '"id": "demo/server-model"' || \
+     ! assert_contains "$(cat "$models_path")" '"contextWindow": 131072' || \
+     ! assert_contains "$(cat "$models_path")" '"maxTokens": 8192' || \
      ! assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" 'pi|--resume last'; then
     fail 'launch pi updates config and launches tool' 'expected pi launch to update settings/models and exec pi with passthrough args'
     return
@@ -1486,7 +1510,7 @@ EOF
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" launch --port 8082 pi
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" launch --port 9000 pi
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'launch pi reuses matching config without new backup' "second launch pi failed: $(cat "$stderr_file")"
     return
@@ -1525,7 +1549,7 @@ EOF
   cat >"$settings_path" <<'EOF'
 {
   "defaultProvider": "corral-launch",
-  "defaultModel": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+  "defaultModel": "demo/server-model",
   "packages": {
     "allowed": [
       "ripgrep"
@@ -1538,11 +1562,13 @@ EOF
 {
   "providers": {
     "corral-launch": {
-      "baseUrl": "http://127.0.0.1:8082/v1",
+      "baseUrl": "http://127.0.0.1:9000/v1",
       "api": "openai-completions",
       "models": [
         {
-          "id": "mlx-community/Qwen2.5-7B-Instruct-4bit"
+          "id": "demo/server-model",
+          "contextWindow": 131072,
+          "maxTokens": 8192
         }
       ]
     }
@@ -1550,7 +1576,7 @@ EOF
 }
 EOF
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" launch --port 8082 pi
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" launch --port 9000 pi
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'launch pi backs up matching pre-existing config once' "launch pi failed: $(cat "$stderr_file")"
     return
@@ -1568,7 +1594,7 @@ EOF
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" launch --port 8082 pi
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" launch --port 9000 pi
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'launch pi does not duplicate backups for matching config' "second launch pi failed: $(cat "$stderr_file")"
     return
@@ -1621,6 +1647,8 @@ EOF
   if assert_contains "$(cat "$config_path")" '"theme": "nord"' && \
      assert_contains "$(cat "$config_path")" '"corral-launch"' && \
      assert_contains "$(cat "$config_path")" '"model": "corral-launch/mlx-community/Qwen2.5-7B-Instruct-4bit"' && \
+     assert_contains "$(cat "$config_path")" '"context": 65536' && \
+     assert_contains "$(cat "$config_path")" '"output": 2048' && \
      assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" 'opencode|.'; then
     pass 'launch opencode updates jsonc and launches tool'
   else
