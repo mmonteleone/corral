@@ -1795,11 +1795,44 @@ EOF
 test_launch_tool_supports_process_matrix() {
   if _launch_tool_supports_process pi mlx_lm.server && \
      _launch_tool_supports_process opencode llama-server && \
-     ! _launch_tool_supports_process codex llama-server && \
+     _launch_tool_supports_process codex llama-server && \
+     ! _launch_tool_supports_process codex mlx_lm.server && \
      ! _launch_tool_supports_process pi llama-cli; then
     pass 'launch tool support matrix'
   else
     fail 'launch tool support matrix' 'unexpected server compatibility result'
+  fi
+}
+
+test_toml_string_literal_escapes_values() {
+  local rendered
+  rendered="$(_toml_string_literal 'demo/"quoted"\model')"
+
+  if assert_eq "$rendered" '"demo/\"quoted\"\\model"'; then
+    pass 'toml string literal escapes values'
+  else
+    fail 'toml string literal escapes values' "unexpected TOML string: $rendered"
+  fi
+}
+
+test_write_codex_model_catalog_uses_function_tools_metadata() {
+  local catalog shell_type apply_patch_tool search_enabled context_window
+
+  _write_codex_model_catalog 'unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL' 32768
+  catalog="$REPLY_CODEX_MODEL_CATALOG"
+
+  shell_type="$(jq -r '.models[0].shell_type' "$catalog")"
+  apply_patch_tool="$(jq -r '.models[0].apply_patch_tool_type' "$catalog")"
+  search_enabled="$(jq -r '.models[0].supports_search_tool' "$catalog")"
+  context_window="$(jq -r '.models[0].context_window' "$catalog")"
+
+  if assert_eq "$shell_type" 'local' && \
+     assert_eq "$apply_patch_tool" 'function' && \
+     assert_eq "$search_enabled" 'false' && \
+     assert_eq "$context_window" '32768'; then
+    pass 'write codex model catalog uses llama-compatible metadata'
+  else
+    fail 'write codex model catalog uses llama-compatible metadata' "unexpected catalog: $(cat "$catalog")"
   fi
 }
 
@@ -1810,9 +1843,9 @@ test_completions_include_launch() {
   bash_out="$(completions_bash)"
 
   if assert_contains "$fish_out" 'launch' && \
-     assert_contains "$fish_out" 'pi opencode' && \
+     assert_contains "$fish_out" 'pi opencode codex' && \
      assert_contains "$zsh_out" 'launch:Configure and launch a supported coding harness' && \
-     assert_contains "$bash_out" 'pi opencode'; then
+     assert_contains "$bash_out" 'pi opencode codex'; then
     pass 'completions include launch'
   else
     fail 'completions include launch' 'expected launch command and tool completions in generated shells'
@@ -1921,6 +1954,8 @@ else
   test_render_merged_json_file_accepts_jsonc
   test_render_merged_json_file_migrates_pi_models_schema
   test_launch_tool_supports_process_matrix
+  test_toml_string_literal_escapes_values
+  test_write_codex_model_catalog_uses_function_tools_metadata
   test_completions_fish_generation
   test_completions_fish_profile_set_positionals
   test_completions_include_copy_and_template_removal_targets

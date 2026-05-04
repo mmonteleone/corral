@@ -1656,19 +1656,42 @@ EOF
   fi
 }
 
-test_launch_codex_is_unsupported() {
+test_launch_codex_uses_llama_responses_provider() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
 
   write_mock_ps "${TEST_DIR}/bin/ps"
+  write_mock_exec_tool "${TEST_DIR}/bin/codex"
 
   run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" launch --port 9000 codex
 
-  if [[ $RUN_STATUS -ne 0 ]] && \
-     assert_contains "$(cat "$stderr_file")" "unsupported launch target 'codex'"; then
-    pass 'launch codex is unsupported'
+  if [[ $RUN_STATUS -eq 0 ]] && \
+     assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" 'codex|-c model="demo/server-model"' && \
+     assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" '-c model_catalog_json=' && \
+     assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" '-c web_search="disabled"' && \
+     assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" '-c model_provider="corral-launch"' && \
+     assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" '-c model_providers.corral-launch.base_url="http://127.0.0.1:9000/v1"' && \
+     assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" '-c model_providers.corral-launch.wire_api="responses"'; then
+    pass 'launch codex uses llama responses provider'
   else
-    fail 'launch codex is unsupported' "expected codex launch to be rejected as unsupported: $(cat "$stderr_file")"
+    fail 'launch codex uses llama responses provider' "expected codex launch to exec codex with provider overrides: stdout=$(cat "$stdout_file" 2>/dev/null || echo empty), stderr=$(cat "$stderr_file" 2>/dev/null || echo empty), launch_log=$(cat "${CORRAL_TEST_LOG_DIR}/launch.log" 2>/dev/null || echo missing)"
+  fi
+}
+
+test_launch_codex_rejects_mlx_server() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  write_mock_ps "${TEST_DIR}/bin/ps"
+  write_mock_exec_tool "${TEST_DIR}/bin/codex"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" launch --port 8082 codex
+
+  if [[ $RUN_STATUS -ne 0 ]] && \
+     assert_contains "$(cat "$stderr_file")" 'no compatible corral server found'; then
+    pass 'launch codex rejects mlx server'
+  else
+    fail 'launch codex rejects mlx server' "expected codex launch to reject mlx_lm.server: $(cat "$stderr_file")"
   fi
 }
 
@@ -5687,7 +5710,10 @@ main() {
     test_launch_opencode_updates_jsonc_and_launches_tool
 
     setup_test_env
-    test_launch_codex_is_unsupported
+    test_launch_codex_uses_llama_responses_provider
+
+    setup_test_env
+    test_launch_codex_rejects_mlx_server
 
     setup_test_env
     test_mlx_install_uv_flow
