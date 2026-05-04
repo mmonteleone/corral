@@ -45,6 +45,8 @@ emit_runtime_process_rows() {
 
       model = "(unknown)"
       port = "-"
+      context_window = "-"
+      max_tokens = "-"
 
       for (i = 3; i <= NF; i++) {
         if (($i == "-hf" || $i == "--hf" || $i == "--model") && i < NF) {
@@ -56,6 +58,27 @@ emit_runtime_process_rows() {
           port = parts[2]
         } else if ($i ~ /^-p[0-9]+$/) {
           port = substr($i, 3)
+        } else if (($i == "--ctx-size" || $i == "-c") && i < NF) {
+          context_window = $(i + 1)
+        } else if ($i ~ /^--ctx-size=/) {
+          split($i, parts, "=")
+          context_window = parts[2]
+        } else if ($i ~ /^-c[0-9]+$/) {
+          context_window = substr($i, 3)
+        } else if (($i == "--n-predict" || $i == "-n") && i < NF) {
+          max_tokens = $(i + 1)
+        } else if ($i ~ /^--n-predict=/) {
+          split($i, parts, "=")
+          max_tokens = parts[2]
+        } else if ($i ~ /^-n[0-9]+$/) {
+          max_tokens = substr($i, 3)
+        } else if (($i == "--max-tokens" || $i == "-m") && i < NF) {
+          max_tokens = $(i + 1)
+        } else if ($i ~ /^--max-tokens=/) {
+          split($i, parts, "=")
+          max_tokens = parts[2]
+        } else if ($i ~ /^-m[0-9]+$/) {
+          max_tokens = substr($i, 3)
         }
       }
 
@@ -67,7 +90,7 @@ emit_runtime_process_rows() {
         port = "8080"
       }
 
-      printf "%s\t%s\t%s\t%s\n", pid, proc, port, model
+      printf "%s\t%s\t%s\t%s\t%s\t%s\n", pid, proc, port, model, context_window, max_tokens
     }
   '
 }
@@ -172,5 +195,5 @@ cmd_ps() {
     return 0
   fi
 
-  print_tsv_table 'llll' $'PID\tPROCESS\tPORT\tMODEL' <<< "$ps_output"
+  print_tsv_table 'llllll' $'PID\tPROCESS\tPORT\tMODEL\tCONTEXT\tMAX_TOKENS' <<< "$ps_output"
 }

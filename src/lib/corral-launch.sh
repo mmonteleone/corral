@@ -87,11 +87,11 @@ cmd_launch() {
   case "$tool" in
     pi)
       require_cmds jq
-      _configure_pi_launch "$REPLY_LAUNCH_ENDPOINT" "$REPLY_LAUNCH_MODEL" "$CORRAL_LAUNCH_PROVIDER_ID"
+      _configure_pi_launch "$REPLY_LAUNCH_ENDPOINT" "$REPLY_LAUNCH_MODEL" "$CORRAL_LAUNCH_PROVIDER_ID" "$REPLY_LAUNCH_CONTEXT_WINDOW" "$REPLY_LAUNCH_MAX_TOKENS"
       ;;
     opencode)
       require_cmds jq
-      _configure_opencode_launch "$REPLY_LAUNCH_ENDPOINT" "$REPLY_LAUNCH_MODEL" "$CORRAL_LAUNCH_PROVIDER_ID"
+      _configure_opencode_launch "$REPLY_LAUNCH_ENDPOINT" "$REPLY_LAUNCH_MODEL" "$CORRAL_LAUNCH_PROVIDER_ID" "$REPLY_LAUNCH_CONTEXT_WINDOW" "$REPLY_LAUNCH_MAX_TOKENS"
       ;;
   esac
 
@@ -126,6 +126,8 @@ _render_launch_template() {
   local provider_id="$2"
   local endpoint="$3"
   local model="$4"
+  local context_window="${5:-65536}"
+  local max_tokens="${6:-4096}"
   local template
 
   template="$(_get_builtin_launch_template_content "$template_name")" || \
@@ -134,6 +136,8 @@ _render_launch_template() {
   template="${template//__CORRAL_PROVIDER_ID__/$provider_id}"
   template="${template//__CORRAL_ENDPOINT__/$endpoint}"
   template="${template//__CORRAL_MODEL__/$model}"
+  template="${template//__CORRAL_CONTEXT_WINDOW__/$context_window}"
+  template="${template//__CORRAL_MAX_TOKENS__/$max_tokens}"
   printf '%s\n' "$template"
 }
 
@@ -424,10 +428,12 @@ _launch_tool_supports_process() {
 # Resolve the single running corral server compatible with the requested tool.
 #
 # Sets:
-#   REPLY_LAUNCH_PROCESS  -> process name (llama-server or mlx_lm.server)
-#   REPLY_LAUNCH_PORT     -> server port
-#   REPLY_LAUNCH_MODEL    -> model identifier passed to the server
-#   REPLY_LAUNCH_ENDPOINT -> OpenAI-compatible base URL for the harness config
+#   REPLY_LAUNCH_PROCESS      -> process name (llama-server or mlx_lm.server)
+#   REPLY_LAUNCH_PORT         -> server port
+#   REPLY_LAUNCH_MODEL        -> model identifier passed to the server
+#   REPLY_LAUNCH_CONTEXT_WINDOW -> discovered context size, or empty when unavailable
+#   REPLY_LAUNCH_MAX_TOKENS   -> discovered max token limit, or empty when unavailable
+#   REPLY_LAUNCH_ENDPOINT     -> OpenAI-compatible base URL for the harness config
 _launch_resolve_target() {
   local tool="$1"
   local requested_port="${2:-}"
@@ -435,7 +441,7 @@ _launch_resolve_target() {
 
   rows="$(emit_runtime_process_rows)"
 
-  while IFS=$'\t' read -r pid process_name port model; do
+  while IFS=$'\t' read -r pid process_name port model context_window max_tokens; do
     [[ -n "$pid" ]] || continue
     if ! _launch_tool_supports_process "$tool" "$process_name"; then
       continue
@@ -443,7 +449,7 @@ _launch_resolve_target() {
     if [[ -n "$requested_port" && "$port" != "$requested_port" ]]; then
       continue
     fi
-    eligible_rows+="${pid}"$'\t'"${process_name}"$'\t'"${port}"$'\t'"${model}"$'\n'
+    eligible_rows+="${pid}"$'\t'"${process_name}"$'\t'"${port}"$'\t'"${model}"$'\t'"${context_window}"$'\t'"${max_tokens}"$'\n'
   done <<< "$rows"
 
   if [[ -z "$eligible_rows" ]]; then
@@ -454,11 +460,13 @@ _launch_resolve_target() {
   row_count="$(printf '%s' "$eligible_rows" | awk 'NF { count += 1 } END { print count + 0 }')"
   if [[ "$row_count" -gt 1 ]]; then
     printf 'Multiple compatible corral servers are running; choose one with --port:\n' >&2
-    print_tsv_table 'llll' $'PID\tPROCESS\tPORT\tMODEL' <<< "$eligible_rows" >&2
+    print_tsv_table 'llllll' $'PID\tPROCESS\tPORT\tMODEL\tCONTEXT\tMAX_TOKENS' <<< "$eligible_rows" >&2
     return 1
   fi
 
-  IFS=$'\t' read -r _ REPLY_LAUNCH_PROCESS REPLY_LAUNCH_PORT REPLY_LAUNCH_MODEL <<< "$eligible_rows"
+  IFS=$'\t' read -r _ REPLY_LAUNCH_PROCESS REPLY_LAUNCH_PORT REPLY_LAUNCH_MODEL REPLY_LAUNCH_CONTEXT_WINDOW REPLY_LAUNCH_MAX_TOKENS <<< "$eligible_rows"
+  [[ "$REPLY_LAUNCH_CONTEXT_WINDOW" == "-" ]] && REPLY_LAUNCH_CONTEXT_WINDOW=""
+  [[ "$REPLY_LAUNCH_MAX_TOKENS" == "-" ]] && REPLY_LAUNCH_MAX_TOKENS=""
   REPLY_LAUNCH_ENDPOINT="http://127.0.0.1:${REPLY_LAUNCH_PORT}/v1"
 }
 
@@ -479,18 +487,20 @@ _configure_pi_launch() {
   local endpoint="$1"
   local model="$2"
   local provider_id="$3"
+  local context_window="${4:-}"
+  local max_tokens="${5:-}"
   local agent_dir settings_path models_path settings_patch models_patch rendered
 
   agent_dir="$(_pi_agent_dir)"
   settings_path="${agent_dir}/settings.json"
   models_path="${agent_dir}/models.json"
 
-  settings_patch="$(_render_launch_template "pi-settings" "$provider_id" "$endpoint" "$model")"
+  settings_patch="$(_render_launch_template "pi-settings" "$provider_id" "$endpoint" "$model" "$context_window" "$max_tokens")"
   rendered="$(_render_merged_json_file "$settings_path" "$settings_patch")"
   _write_text_file_with_backup "$settings_path" "$rendered" 1
   _report_file_update "$settings_path"
 
-  models_patch="$(_render_launch_template "pi-models" "$provider_id" "$endpoint" "$model")"
+  models_patch="$(_render_launch_template "pi-models" "$provider_id" "$endpoint" "$model" "$context_window" "$max_tokens")"
   rendered="$(_render_merged_json_file "$models_path" "$models_patch" 0 "pi-models")"
   _write_text_file_with_backup "$models_path" "$rendered" 1
   _report_file_update "$models_path"
@@ -500,12 +510,14 @@ _configure_opencode_launch() {
   local endpoint="$1"
   local model="$2"
   local provider_id="$3"
+  local context_window="${4:-}"
+  local max_tokens="${5:-}"
   local config_path patch rendered jsonc_mode="0"
 
   config_path="$(_opencode_config_path)"
   [[ "$config_path" == *.jsonc ]] && jsonc_mode="1"
 
-  patch="$(_render_launch_template "opencode" "$provider_id" "$endpoint" "$model")"
+  patch="$(_render_launch_template "opencode" "$provider_id" "$endpoint" "$model" "$context_window" "$max_tokens")"
   rendered="$(_render_merged_json_file "$config_path" "$patch" "$jsonc_mode")"
   _write_text_file_with_backup "$config_path" "$rendered"
   _report_file_update "$config_path"
