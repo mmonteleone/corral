@@ -568,19 +568,19 @@ test_validate_template_name_invalid() {
 
 # ── _get_builtin_template_content ────────────────────────────────────────────
 
-test_builtin_template_chat() {
+test_builtin_template_general() {
   local result
-  result="$(_get_builtin_template_content "chat")"
+  result="$(_get_builtin_template_content "general")"
   if assert_contains "$result" "--temp 0.7" && assert_contains "$result" "[llama.cpp]"; then
-    pass 'builtin template chat'
+    pass 'builtin template general'
   else
-    fail 'builtin template chat' "got: $result"
+    fail 'builtin template general' "got: $result"
   fi
 }
 
 test_builtin_template_code() {
   local result
-  result="$(_get_builtin_template_content "code-l")"
+  result="$(_get_builtin_template_content "code")"
   if assert_contains "$result" "--temp 0.3" && assert_contains "$result" "[llama.cpp.serve]"; then
     pass 'builtin template code'
   else
@@ -1488,10 +1488,12 @@ test_section_matches_compound_sections() {
 test_collect_template_entries_includes_builtins() {
   local result
   result="$(collect_template_entries)"
-  if assert_contains "$result" "chat|built-in" && assert_contains "$result" "code-l|built-in" && assert_contains "$result" "code-s|built-in"; then
-    pass 'collect_template_entries includes built-in chat and code templates'
+  if assert_contains "$result" 'code|built-in|(none)' && \
+     assert_contains "$result" 'general|built-in|(none)' && \
+     assert_contains "$result" 'qwen-3-general|built-in|unsloth/Qwen3.6-35B-A3B-GGUF'; then
+    pass 'collect_template_entries includes built-ins with default models'
   else
-    fail 'collect_template_entries includes built-in chat and code templates' "got: $result"
+    fail 'collect_template_entries includes built-ins with default models' "got: $result"
   fi
 }
 
@@ -1860,7 +1862,7 @@ else
   test_validate_profile_name_empty
   test_validate_template_name_valid
   test_validate_template_name_invalid
-  test_builtin_template_chat
+  test_builtin_template_general
   test_builtin_template_code
   test_builtin_template_unknown
   test_detect_arch

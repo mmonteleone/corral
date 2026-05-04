@@ -41,10 +41,7 @@ collect_profile_entries() {
   done
 }
 
-# Emit one line per template in pipe-delimited format:
-#   {template_name}|{type}|{default_model}
-# type is "built-in" or "user". default_model is "(none)" when absent.
-collect_template_entries() {
+_builtin_template_names() {
 # BEGIN_BUILTIN_TEMPLATE_NAMES
   # In dev mode, discover built-in template names from src/templates/.
   # At build time, tools/build.sh replaces this block with a static list.
@@ -57,10 +54,36 @@ collect_template_entries() {
     builtin_names+=("$(basename "$_btf" .conf)")
   done
 # END_BUILTIN_TEMPLATE_NAMES
-  local bname
-  for bname in "${builtin_names[@]}"; do
-    printf '%s|%s|%s\n' "$bname" 'built-in' '(none)'
+  printf '%s\n' "${builtin_names[@]}"
+}
+
+_builtin_templates_usage_list() {
+  local names=()
+  local name
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    names+=("$name")
+  done < <(_builtin_template_names)
+  ((${#names[@]} > 0)) || return 0
+
+  local i
+  for ((i = 0; i < ${#names[@]}; i++)); do
+    ((i > 0)) && printf ', '
+    printf '%s' "${names[$i]}"
   done
+}
+
+# Emit one line per template in pipe-delimited format:
+#   {template_name}|{type}|{default_model}
+# type is "built-in" or "user". default_model is "(none)" when absent.
+collect_template_entries() {
+  local bname bcontent bmodel
+  while IFS= read -r bname; do
+    [[ -n "$bname" ]] || continue
+    bcontent="$(_get_builtin_template_content "$bname")"
+    bmodel="$(_extract_model_from_template_content "$bcontent" || true)"
+    printf '%s|%s|%s\n' "$bname" 'built-in' "${bmodel:-(none)}"
+  done < <(_builtin_template_names)
 
   local templates_dir
   templates_dir="$(_templates_dir)"
@@ -133,7 +156,7 @@ Create or replace a named profile from a model spec or template.
 MODEL_SPEC is optional when using a template that includes a 'model=' line.
 
 Profiles are stored in: \${CORRAL_PROFILES_DIR:-~/.config/corral/profiles}
-Built-in templates available for 'profile': chat, code
+Built-in templates available for 'profile': $(_builtin_templates_usage_list)
 
 The backend (llama.cpp or mlx) is inferred automatically from the model spec
 when running or serving a profile. No explicit backend declaration is needed.
@@ -163,7 +186,7 @@ Use a profile name instead of a model spec with 'run' or 'serve':
   $SCRIPT_NAME serve coder
 
 Create/update a profile from a built-in template:
-  $SCRIPT_NAME profile mycoder code unsloth/Qwen3.5-27B-GGUF:UD-Q5_K_XL
+  $SCRIPT_NAME profile mycoder code unsloth/Qwen3.6-35B-A3B-GGUF:Q4_K_M
 EOF
 }
 
@@ -183,7 +206,7 @@ Usage: $SCRIPT_NAME template <TEMPLATE> [<MODEL_SPEC>] [-- <flags...>]
 Create or replace a user-defined template. MODEL_SPEC is optional.
 
 Templates are stored in: \${CORRAL_TEMPLATES_DIR:-~/.config/corral/templates}
-Built-in templates: chat, code
+Built-in templates: $(_builtin_templates_usage_list)
 EOF
 }
 

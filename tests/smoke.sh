@@ -1899,8 +1899,8 @@ test_template_backend_sections_inherited_by_profile() {
 
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
 
-  # Use the built-in 'code' template which now has [llama.cpp] and [llama.cpp.serve] sections.
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile testcoder code-s demo/model:Q4_K
+  # Use the built-in 'code' template which has [llama.cpp] and [llama.cpp.serve] sections.
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile testcoder code demo/model:Q4_K
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'template backend sections inherited by profile' "set failed: $(cat "$stderr_file")"
     return
@@ -1909,11 +1909,11 @@ test_template_backend_sections_inherited_by_profile() {
   local profile_content
   profile_content="$(cat "${CORRAL_PROFILES_DIR}/testcoder")"
   if ! assert_contains "$profile_content" '[llama.cpp]'; then
-    fail 'template backend sections inherited by profile' "expected [llama.cpp] section from code-s template, got: $profile_content"
+    fail 'template backend sections inherited by profile' "expected [llama.cpp] section from code template, got: $profile_content"
     return
   fi
   if ! assert_contains "$profile_content" '--flash-attn on'; then
-    fail 'template backend sections inherited by profile' "expected llama.cpp flag from code-s template, got: $profile_content"
+    fail 'template backend sections inherited by profile' "expected llama.cpp flag from code template, got: $profile_content"
     return
   fi
 
@@ -3055,7 +3055,7 @@ test_list_includes_templates_section() {
     fail 'list includes templates section' "expected user template row, got: $out"
     return
   fi
-  if ! assert_contains "$out" 'chat' || ! assert_contains "$out" 'code-s'; then
+  if ! assert_contains "$out" 'general' || ! assert_contains "$out" 'qwen-3-general' || ! assert_contains "$out" 'unsloth/Qwen3.6-35B-A3B-GGUF'; then
     fail 'list includes templates section' "expected built-in templates in list output, got: $out"
     return
   fi
@@ -3119,7 +3119,7 @@ test_list_quiet_includes_templates() {
     fail 'list quiet include templates' "expected user template name in quiet output, got: $quiet_out"
     return
   fi
-  if ! assert_contains "$quiet_out" 'chat' || ! assert_contains "$quiet_out" 'code-s'; then
+  if ! assert_contains "$quiet_out" 'general' || ! assert_contains "$quiet_out" 'qwen-3-general'; then
     fail 'list quiet include templates' "expected built-in template names in quiet output, got: $quiet_out"
     return
   fi
@@ -3133,7 +3133,7 @@ test_list_includes_copied_builtin_template_without_model() {
 
   export CORRAL_TEMPLATES_DIR="${HOME}/.config/corral/templates"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" cp code-s code2
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" cp code code2
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'list includes copied builtin template without model' "template copy failed: $(cat "$stderr_file")"
     return
@@ -4627,7 +4627,7 @@ test_profile_set_builtin_with_model() {
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
   unset CORRAL_TEMPLATES_DIR
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile mycoder code-s user/qwen2.5:Q4_K
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile mycoder code user/qwen2.5:Q4_K
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'profile set from builtin with model' "command failed: $(cat "$stderr_file")"
     return
@@ -4650,11 +4650,11 @@ test_profile_set_builtin_with_model() {
     return
   fi
   if ! assert_contains "$content" "--temp 0.3"; then
-    fail 'profile set from builtin with model' "expected code-s template flag --temp, got: $content"
+    fail 'profile set from builtin with model' "expected code template flag --temp, got: $content"
     return
   fi
   if ! assert_contains "$content" "--gpu-layers all"; then
-    fail 'profile set from builtin with model' "expected code-s template flag --gpu-layers, got: $content"
+    fail 'profile set from builtin with model' "expected code template flag --gpu-layers, got: $content"
     return
   fi
 
@@ -4668,8 +4668,8 @@ test_profile_set_builtin_no_model_errors() {
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
   unset CORRAL_TEMPLATES_DIR
 
-  # 'code-s' built-in has no model= line; no model arg provided → should error.
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile mycoder code-s
+  # 'code' built-in has no model= line; no model arg provided → should error.
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile mycoder code
   if [[ $RUN_STATUS -eq 0 ]]; then
     fail 'profile set builtin no model errors' "expected failure when no model provided"
     return
@@ -4680,6 +4680,39 @@ test_profile_set_builtin_no_model_errors() {
   fi
 
   pass 'profile set builtin no model errors'
+}
+
+test_profile_set_builtin_uses_default_model() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
+  unset CORRAL_TEMPLATES_DIR
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile mygeneral qwen-3-general
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'profile set builtin uses default model' "command failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show mygeneral
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'profile set builtin uses default model' "show failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local content
+  content="$(cat "$stdout_file")"
+  if ! assert_contains "$content" 'model=unsloth/Qwen3.6-35B-A3B-GGUF'; then
+    fail 'profile set builtin uses default model' "expected default model from built-in template, got: $content"
+    return
+  fi
+  if ! assert_contains "$content" '--temp 1.0'; then
+    fail 'profile set builtin uses default model' "expected built-in template flags, got: $content"
+    return
+  fi
+
+  pass 'profile set builtin uses default model'
 }
 
 test_profile_set_user_template() {
@@ -4731,7 +4764,7 @@ test_profile_set_template_overwrites_existing() {
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile mypro code-s user/updated:Q6_K
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" profile mypro code user/updated:Q6_K
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'profile set template overwrites existing' "overwrite set failed: $(cat "$stderr_file")"
     return
@@ -4767,7 +4800,7 @@ test_template_show_builtin() {
 
   unset CORRAL_TEMPLATES_DIR
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show code-s
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show code
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'show builtin template' "command failed: $(cat "$stderr_file")"
     return
@@ -4776,11 +4809,11 @@ test_template_show_builtin() {
   local out
   out="$(cat "$stdout_file")"
   if ! assert_contains "$out" "--temp 0.3"; then
-    fail 'show builtin template' "expected '--temp 0.3' in code-s template, got: $out"
+    fail 'show builtin template' "expected '--temp 0.3' in code template, got: $out"
     return
   fi
   if ! assert_contains "$out" "--gpu-layers all"; then
-    fail 'show builtin template' "expected '--gpu-layers all' in code-s template, got: $out"
+    fail 'show builtin template' "expected '--gpu-layers all' in code template, got: $out"
     return
   fi
 
@@ -4835,7 +4868,7 @@ test_template_copy() {
     return
   fi
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" copy code-s code-copy
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" copy code code-copy
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'template copy' "template copy failed: $(cat "$stderr_file")"
     return
@@ -4931,7 +4964,7 @@ test_remove_builtin_template_via_top_level_remove_errors() {
 
   unset CORRAL_TEMPLATES_DIR
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" remove chat
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" remove general
   if [[ $RUN_STATUS -eq 0 ]]; then
     fail 'remove/rm rejects built-in template removal' 'expected non-zero exit for built-in template'
     return
@@ -4950,14 +4983,14 @@ test_template_user_overrides_builtin() {
 
   export CORRAL_TEMPLATES_DIR="${HOME}/.config/corral/templates"
 
-  # Write a user template named 'code-s' that overrides the built-in.
+  # Write a user template named 'code' that overrides the built-in.
   mkdir -p "$CORRAL_TEMPLATES_DIR"
-  cat >"${CORRAL_TEMPLATES_DIR}/code-s" <<'EOF'
+  cat >"${CORRAL_TEMPLATES_DIR}/code" <<'EOF'
 --temp 0.9
 --ctx-size 1024
 EOF
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show code-s
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show code
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'profile user template overrides builtin' "show failed: $(cat "$stderr_file")"
     return
@@ -5049,7 +5082,7 @@ test_show_template_by_name() {
   unset CORRAL_PROFILES_DIR
   unset CORRAL_TEMPLATES_DIR
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show code-s
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show code
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'show template by name' "show failed: $(cat "$stderr_file")"
     return
@@ -5076,7 +5109,7 @@ test_show_template_explicit_flag() {
   unset CORRAL_PROFILES_DIR
   unset CORRAL_TEMPLATES_DIR
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --template code-s
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" show --template code
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'show template explicit flag' "show failed: $(cat "$stderr_file")"
     return
@@ -5879,6 +5912,9 @@ main() {
 
     setup_test_env
     test_profile_set_builtin_no_model_errors
+
+    setup_test_env
+    test_profile_set_builtin_uses_default_model
 
     setup_test_env
     test_profile_set_user_template
