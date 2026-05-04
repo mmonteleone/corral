@@ -449,12 +449,34 @@ test_generated_standalone_script() {
     return
   fi
 
+  # shellcheck disable=SC2016
+  if grep -q 'awk_path="$(cd "$(dirname "${BASH_SOURCE\[0\]}")" && pwd)/../awk/' "$generated_script"; then
+    fail 'generated standalone script inlines awk assets' 'expected standalone script to inline awk scripts instead of reading src/awk/ at runtime'
+    return
+  fi
+
+  if ! grep -q 'llama-(cli|server)' "$generated_script"; then
+    fail 'generated standalone script inlines awk assets' 'expected standalone script to include embedded processes awk'
+    return
+  fi
+
+  if ! grep -q 'in_string' "$generated_script"; then
+    fail 'generated standalone script inlines awk assets' 'expected standalone script to include embedded jsonc awk'
+    return
+  fi
+
+  if ! grep -q 'visible_length' "$generated_script"; then
+    fail 'generated standalone script inlines awk assets' 'expected standalone script to include embedded table awk'
+    return
+  fi
+
   run_cmd "$stdout_file" "$stderr_file" bash "$generated_script" help
   if [[ $RUN_STATUS -eq 0 ]] && assert_contains "$(cat "$stdout_file")" 'Commands:'; then
     pass 'generated standalone script builds'
     pass 'generated standalone script is self-contained'
     pass 'generated standalone script inlines launch templates'
     pass 'generated standalone script inlines search jq asset'
+    pass 'generated standalone script inlines awk assets'
   else
     fail 'generated standalone script is self-contained' "expected generated script to run standalone help successfully: $(cat "$stderr_file")"
   fi

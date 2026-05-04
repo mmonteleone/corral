@@ -233,7 +233,7 @@ model=unsloth/gemma-4-26B-A4B-it-GGUF
 
 `corral launch` configures a supported coding harness to use a currently running `corral serve` instance, then launches the harness.
 
-Supported harnesses currently include `pi` and `opencode`. Corral inspects running servers via `corral ps`, matches the server's local OpenAI-compatible endpoint and model name, and writes that into the harness config. Existing configs are preserved with a timestamped backup next to any modified config file
+Supported harnesses currently include `pi` and `opencode`. Corral inspects running servers via `corral ps`, matches the server's local OpenAI-compatible endpoint, model, context window, and max tokens, and writes that configuration into the harness config. Existing configs are preserved with a timestamped backup next to any modified config file.
 
 ## Shell completions
 

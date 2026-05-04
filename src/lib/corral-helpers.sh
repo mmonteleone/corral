@@ -187,62 +187,8 @@ print_tsv_table() {
     printf '%s\n' "$header_tsv"
     cat
   } | awk -v FS='\t' -v OFS='  ' -v alignments="$alignments" \
-      -v header_color_start="$header_color_start" -v header_color_end="$header_color_end" '
-    function repeat(ch, count, out, i) {
-      out = ""
-      for (i = 0; i < count; i++) {
-        out = out ch
-      }
-      return out
-    }
-
-    function visible_length(value, plain) {
-      plain = value
-      gsub(/\033\[[0-9;]*m/, "", plain)
-      return length(plain)
-    }
-
-    {
-      row_count++
-      if (NF > col_count) {
-        col_count = NF
-      }
-      for (i = 1; i <= NF; i++) {
-        cells[row_count, i] = $i
-        if (visible_length($i) > widths[i]) {
-          widths[i] = visible_length($i)
-        }
-      }
-    }
-
-    END {
-      if (row_count == 0) {
-        exit 0
-      }
-
-      for (row = 1; row <= row_count; row++) {
-        if (row == 1 && header_color_start != "") {
-          printf "%s", header_color_start
-        }
-        for (col = 1; col <= col_count; col++) {
-          value = cells[row, col]
-          width = widths[col]
-          if (substr(alignments, col, 1) == "r") {
-            printf "%" width "s", value
-          } else {
-            printf "%-" width "s", value
-          }
-          if (col < col_count) {
-            printf OFS
-          }
-        }
-        if (row == 1 && header_color_end != "") {
-          printf "%s", header_color_end
-        }
-        printf "\n"
-      }
-    }
-  '
+      -v header_color_start="$header_color_start" -v header_color_end="$header_color_end" \
+      "$(_print_tsv_table_awk)"
 }
 
 # Prepend the llama.cpp current/ bin dir to PATH if it is not already present.
@@ -328,6 +274,17 @@ require_mlx_lm() {
   command -v mlx_lm.chat >/dev/null 2>&1 || \
     command -v mlx_lm.generate >/dev/null 2>&1 || \
     die "mlx_lm not found. Install it first: $SCRIPT_NAME install --backend mlx"
+}
+
+# Print the awk program used by print_tsv_table().
+# In source mode this reads src/awk/table.awk from disk; tools/build.sh
+# replaces the marked block with an inlined heredoc in standalone builds.
+_print_tsv_table_awk() {
+# BEGIN_TABLE_AWK
+  local awk_path
+  awk_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../awk/table.awk"
+  cat "$awk_path"
+# END_TABLE_AWK
 }
 
 # Strip trailing spaces and tabs without requiring extglob to be enabled.
