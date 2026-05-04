@@ -45,8 +45,8 @@ last modified date, and available quant variants (for GGUF models).
 Examples:
   $SCRIPT_NAME show myprofile
   $SCRIPT_NAME show --profile myprofile
-  $SCRIPT_NAME show chat
-  $SCRIPT_NAME show --template chat
+  $SCRIPT_NAME show code
+  $SCRIPT_NAME show --template qwen-3-general
   $SCRIPT_NAME show unsloth/gemma-4-26B-A4B-it-GGUF
   $SCRIPT_NAME show --model unsloth/gemma-4-26B-A4B-it-GGUF
 EOF

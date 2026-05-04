@@ -59,16 +59,16 @@ corral run unsloth/gemma-4-26B-A4B-it-GGUF    # Chat (downloads on first use)
 corral run mlx-community/gemma-4-26b-a4b-it-6bit  # MLX model (auto-detected)
 corral serve unsloth/gemma-4-26B-A4B-it-GGUF  # OpenAI-compatible API + web UI
 
-corral run unsloth/gemma-4-26B-A4B-it-GGUF -- -ngl 999 -c 8192  # Extra flags
+corral run unsloth/gemma-4-26B-A4B-it-GGUF -- --gpu-layers all -c 8192  # Extra flags
 
 # Profiles: save a name + model + flags combo
-corral profile coder unsloth/gemma-4-26B-A4B-it-GGUF -- \
-  --ctx-size 65536 --temp 0.2 -ngl 999
-corral run coder
+corral profile coder unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_XL -- \
+  --ctx-size 65536 --temp 0.5 --gpu-layers all
+corral serve coder
 
 # Or seed a profile from a built-in template
-corral profile mycoder code unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_M
-corral run mycoder
+corral profile gemma-coder gemma-4
+corral serve gemma-coder
 
 # Launch supported coding harnesses against a running server
 corral launch pi
@@ -148,23 +148,30 @@ A **profile** saves a model + flags under a name, usable anywhere a model is acc
 
 ```sh
 corral profile coder unsloth/gemma-4-26B-A4B-it-GGUF -- \
-  --ctx-size 65536 --temp 0.2 -ngl 999
+  --ctx-size 65536 --temp 0.5 --gpu-layers all
 
 corral run coder
 corral serve coder
 corral run coder -- --temp 0.5   # inline flags override profile flags
 ```
 
-A **template** is a reusable set of flags that can seed profiles. Corral ships two:
+A **template** is a reusable set of flags that can seed profiles. Corral currently includes a few built-in:
 
-| Template | Purpose | Key flags |
-|---|---|---|
-| `chat` | Conversational | `--temp 0.8` |
-| `code` | Coding | `--temp 0.2` |
+- general
+- code
+- gemma-4
+- qwen-3-general
+- qwen-3-code
+- gpt-oss
 
 ```sh
-corral profile mycoder code unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_M   # from template
-corral run mycoder
+# Create a profile from the built-in qwen-3-code template
+corral profile qwen-coder qwen-3-code
+corral serve qwen-coder
+
+# Override to a specific model/quant
+corral profile qwen-coder qwen-3-code unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q5_K_L
+corral serve qwen-coder
 ```
 
 Create custom templates with `corral template`. If a template includes a `model=` line, the model is optional when creating profiles from it:
@@ -180,10 +187,10 @@ corral show coder                            # Show profile details
 corral show --template chat                  # Show template details
 corral show unsloth/gemma-4-26B-A4B-it-GGUF  # Show model details
 corral copy coder coder2
-corral cp coder coder3              # alias
-corral copy chat chat-copy         # copy built-in template
-corral cp work-chat work-chat-2    # alias
-corral remove work-chat                     # delete user template
+corral cp coder coder3                       # alias
+corral copy chat chat-copy                   # copy built-in template
+corral cp work-chat work-chat-2              # alias
+corral remove work-chat                      # delete user template
 ```
 
 ### Profile file format
@@ -206,7 +213,7 @@ model=unsloth/gemma-4-26B-A4B-it-GGUF
 --ctx-size 65536
 --n-predict 4096
 --flash-attn on
--ngl 999
+--gpu-layers all
 
 [llama.cpp.serve]
 --cache-reuse 256
