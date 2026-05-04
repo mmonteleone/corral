@@ -18,7 +18,7 @@ corral launch pi
 - The full Hugging Face model registry, not just what Ollama ships
 - Model search and discovery against Hugging Face from the command line
 - Saved, templated, profiles for pinning a model with a specific set of flags
-- Pre-configured launcher for tools including [OpenCode](https://opencode.ai) and [Pi](https://pi.dev)
+- Pre-configured launcher for tools including [OpenCode](https://opencode.ai), [Pi](https://pi.dev), and [Codex](https://openai.com/codex/)
 - Command, model, profile, and quant shell completions for fish, zsh, and bash
 - Standard HF cache. Downloaded models are visible to other tools
 
@@ -73,6 +73,7 @@ corral serve gemma-coder
 # Launch supported coding harnesses against a running server
 corral launch pi
 corral launch opencode
+corral launch codex
 
 # List models, installed engines, profiles, templates
 corral list
@@ -88,7 +89,7 @@ corral remove coder
 | `install` | Install backend(s) and shell completions |
 | `run MODEL\|PROFILE` | Interactive chat (`llama-cli` / `mlx_lm.chat`) |
 | `serve MODEL\|PROFILE` | OpenAI-compatible server (`llama-server` / `mlx_lm.server`) |
-| `launch TOOL` | Configure and launch `pi` or `opencode` against a running server |
+| `launch TOOL` | Configure and launch `pi`, `opencode`, or `codex` against a running server |
 | `pull MODEL` | Download model artifacts without running |
 | `search [QUERY]` | Search Hugging Face for compatible models |
 | `browse MODEL` | Open a model's Hugging Face page in the browser |
@@ -233,7 +234,7 @@ model=unsloth/gemma-4-26B-A4B-it-GGUF
 
 `corral launch` configures a supported coding harness to use a currently running `corral serve` instance, then launches the harness.
 
-Supported harnesses currently include `pi` and `opencode`. Corral inspects running servers via `corral ps`, matches the server's local OpenAI-compatible endpoint, model, context window, and max tokens, and writes that configuration into the harness config. Existing configs are preserved with a timestamped backup next to any modified config file.
+Supported harnesses currently include `pi`, `opencode`, and `codex`. Corral inspects running servers via `corral ps`, matches the server's local OpenAI-compatible endpoint, model, context window, and max tokens, and configures the harness for that invocation. Existing `pi` and `opencode` configs are preserved with a timestamped backup next to any modified config file. _Codex integration does not currently support the MLX backend._
 
 ## Shell completions
 

@@ -1,11 +1,10 @@
 # Launch supported third-party coding harnesses against a running corral server.
 #
 # Detects a running corral server process (llama-server or mlx_lm.server),
-# updates the harness's configuration files to point at that server's
-# OpenAI-compatible /v1 endpoint, backs up existing config when it changes,
-# and execs the harness.
+# configures the harness to point at that server's OpenAI-compatible /v1
+# endpoint, backs up file-backed config when it changes, and execs the harness.
 #
-# Supported harnesses: pi, opencode
+# Supported harnesses: pi, opencode, codex
 #
 # JSON/JSONC handling:
 #   _strip_jsonc()            — awk program that strips // and /* */ comments
@@ -24,25 +23,27 @@ CORRAL_LAUNCH_PROVIDER_ID="corral-launch"
 
 cmd_launch_usage() {
   cat <<EOF
-Usage: $SCRIPT_NAME launch [--port <port>] <pi|opencode> [-- <extra args...>]
+Usage: $SCRIPT_NAME launch [--port <port>] <pi|opencode|codex> [-- <extra args...>]
 
 Arguments:
-  pi|opencode  Supported coding harness to configure and launch.
+  pi|opencode|codex  Supported coding harness to configure and launch.
 
 Options:
   --port <port>      Use a specific running corral server when multiple are active.
 
-Corral inspects the selected running server, updates the harness configuration
-to point at that server's OpenAI-compatible endpoint and model, backs up the
-existing config next to the original when it changes, and then launches the
-harness.
+Corral inspects the selected running server, configures the harness to point at
+that server's OpenAI-compatible endpoint and model, and then launches the
+harness. File-backed harness configs are backed up next to the original when
+they change.
 
 Notes:
   - pi and opencode work with llama-server and mlx_lm.server.
+  - codex requires a llama-server with /v1/responses support.
 
 Examples:
   $SCRIPT_NAME launch pi
   $SCRIPT_NAME launch --port 8082 opencode
+  $SCRIPT_NAME launch --port 9000 codex
 EOF
 }
 
@@ -93,6 +94,8 @@ cmd_launch() {
       require_cmds jq
       _configure_opencode_launch "$REPLY_LAUNCH_ENDPOINT" "$REPLY_LAUNCH_MODEL" "$CORRAL_LAUNCH_PROVIDER_ID" "$REPLY_LAUNCH_CONTEXT_WINDOW" "$REPLY_LAUNCH_MAX_TOKENS"
       ;;
+    codex)
+      ;;
   esac
 
   printf 'Launching %s against %s (model: %s)\n' \
@@ -104,6 +107,19 @@ cmd_launch() {
       ;;
     opencode)
       exec opencode "${extra_args[@]+"${extra_args[@]}"}"
+      ;;
+    codex)
+      _write_codex_model_catalog "$REPLY_LAUNCH_MODEL" "$REPLY_LAUNCH_CONTEXT_WINDOW"
+      exec codex \
+        -c "model=$(_toml_string_literal "$REPLY_LAUNCH_MODEL")" \
+        -c "model_catalog_json=$(_toml_string_literal "$REPLY_CODEX_MODEL_CATALOG")" \
+        -c 'web_search="disabled"' \
+        -c "model_provider=$(_toml_string_literal "$CORRAL_LAUNCH_PROVIDER_ID")" \
+        -c "model_providers.${CORRAL_LAUNCH_PROVIDER_ID}.name=\"Corral\"" \
+        -c "model_providers.${CORRAL_LAUNCH_PROVIDER_ID}.base_url=$(_toml_string_literal "$REPLY_LAUNCH_ENDPOINT")" \
+        -c "model_providers.${CORRAL_LAUNCH_PROVIDER_ID}.wire_api=\"responses\"" \
+        -c "model_providers.${CORRAL_LAUNCH_PROVIDER_ID}.experimental_bearer_token=\"corral\"" \
+        "${extra_args[@]+"${extra_args[@]}"}"
       ;;
   esac
 }
@@ -143,6 +159,39 @@ _render_launch_template() {
 
 _launch_timestamp() {
   date -u +"%Y%m%dT%H%M%SZ"
+}
+
+_toml_string_literal() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "$value"
+}
+
+_json_string_literal() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\t'/\\t}"
+  printf '"%s"' "$value"
+}
+
+_write_codex_model_catalog() {
+  local model="$1"
+  local context_window="${2:-65536}"
+  local instructions="You are Codex, a coding agent. Help the user by editing files, running commands when appropriate, and explaining results concisely."
+  local catalog_path
+
+  [[ -n "$context_window" ]] || context_window="65536"
+  catalog_path="$(mktemp "${TMPDIR:-/tmp}/corral-codex-model-catalog.XXXXXX")"
+
+  cat > "$catalog_path" <<EOF
+{"models":[{"slug":$(_json_string_literal "$model"),"display_name":$(_json_string_literal "$model"),"description":"Corral local model","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low","description":"Fast responses with lighter reasoning"},{"effort":"medium","description":"Balances speed and reasoning depth"},{"effort":"high","description":"Greater reasoning depth"}],"shell_type":"local","visibility":"list","supported_in_api":true,"priority":0,"base_instructions":$(_json_string_literal "$instructions"),"model_messages":{"instructions_template":$(_json_string_literal "$instructions"),"instructions_variables":{"personality_default":"","personality_pragmatic":""}},"supports_reasoning_summaries":false,"default_reasoning_summary":"none","support_verbosity":false,"default_verbosity":"low","apply_patch_tool_type":"function","web_search_tool_type":"text","truncation_policy":{"mode":"tokens","limit":10000},"supports_parallel_tool_calls":false,"supports_image_detail_original":false,"context_window":${context_window},"max_context_window":${context_window},"effective_context_window_percent":95,"experimental_supported_tools":[],"input_modalities":["text"],"supports_search_tool":false}]}
+EOF
+
+  REPLY_CODEX_MODEL_CATALOG="$catalog_path"
 }
 
 _ensure_parent_dir() {
@@ -322,6 +371,10 @@ _launch_tool_supports_process() {
     pi|opencode)
       return 0
       ;;
+    codex)
+      [[ "$process_name" == "llama-server" ]]
+      return
+      ;;
     *)
       return 1
       ;;
@@ -487,7 +540,7 @@ _parse_launch_args() {
 
 _validate_launch_tool() {
   case "$1" in
-    pi|opencode) ;;
-    *) die "unsupported launch target '${1}'. Expected one of: pi, opencode" ;;
+    pi|opencode|codex) ;;
+    *) die "unsupported launch target '${1}'. Expected one of: pi, opencode, codex" ;;
   esac
 }
