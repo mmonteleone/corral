@@ -29,11 +29,6 @@ Not really.
 ## Install
 
 ```sh
-# System-wide
-sudo curl -fsSL https://github.com/mmonteleone/corral/releases/latest/download/corral \
-  -o /usr/local/bin/corral && sudo chmod +x /usr/local/bin/corral
-
-# Or user-local (no sudo)
 curl -fsSL https://github.com/mmonteleone/corral/releases/latest/download/corral \
   -o ~/.local/bin/corral && chmod +x ~/.local/bin/corral
 ```
