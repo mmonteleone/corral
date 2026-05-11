@@ -618,41 +618,17 @@ test_detect_arch() {
 
 test_platform_default_backend_macos_arm64() {
   local result
-  local mock_bin="${TEST_ROOT}/mock-uname-darwin"
-  mkdir -p "$mock_bin"
-  cat >"${mock_bin}/uname" <<'EOF'
-#!/usr/bin/env bash
-case "${1:-}" in
-  -s) echo "Darwin" ;;
-  -m) echo "arm64" ;;
-  *)  echo "Darwin" ;;
-esac
-EOF
-  chmod +x "${mock_bin}/uname"
-
-  result="$(PATH="${mock_bin}:$PATH" platform_default_backend)"
-  if assert_eq "$result" "mlx"; then
-    pass 'platform default backend is mlx on Darwin/arm64'
+  result="$(platform_default_backend)"
+  if assert_eq "$result" "llama.cpp"; then
+    pass 'platform default backend is llama.cpp on Darwin/arm64'
   else
-    fail 'platform default backend is mlx on Darwin/arm64' "expected 'mlx', got '$result'"
+    fail 'platform default backend is llama.cpp on Darwin/arm64' "expected 'llama.cpp', got '$result'"
   fi
 }
 
 test_platform_default_backend_non_macos_arm64() {
   local result
-  local mock_bin="${TEST_ROOT}/mock-uname-linux"
-  mkdir -p "$mock_bin"
-  cat >"${mock_bin}/uname" <<'EOF'
-#!/usr/bin/env bash
-case "${1:-}" in
-  -s) echo "Linux" ;;
-  -m) echo "x86_64" ;;
-  *)  echo "Linux" ;;
-esac
-EOF
-  chmod +x "${mock_bin}/uname"
-
-  result="$(PATH="${mock_bin}:$PATH" platform_default_backend)"
+  result="$(platform_default_backend)"
   if assert_eq "$result" "llama.cpp"; then
     pass 'platform default backend is llama.cpp on non-Darwin/arm64'
   else
@@ -673,11 +649,11 @@ test_resolve_backend_prefers_flag() {
 test_resolve_backend_falls_back_to_platform_default() {
   local result
   result="$(resolve_backend "")"
-  # Test runs on whatever the host platform is; just verify it returns a valid backend.
-  case "$result" in
-    mlx|llama.cpp) pass 'resolve_backend falls back to platform default when flag is empty' ;;
-    *) fail 'resolve_backend falls back to platform default when flag is empty' "expected mlx or llama.cpp, got '$result'" ;;
-  esac
+  if assert_eq "$result" "llama.cpp"; then
+    pass 'resolve_backend falls back to platform default when flag is empty'
+  else
+    fail 'resolve_backend falls back to platform default when flag is empty' "expected 'llama.cpp', got '$result'"
+  fi
 }
 
 test_resolve_backend_rejects_invalid_value() {
@@ -915,10 +891,10 @@ EOF
 
   local result
   result="$(PATH="${mock_bin}:$PATH" _infer_model_backend "$model_name")"
-  if assert_eq "$result" "mlx"; then
-    pass '_infer_model_backend cached non-GGUF model → mlx'
+  if assert_eq "$result" "llama.cpp"; then
+    pass '_infer_model_backend cached non-GGUF model → llama.cpp'
   else
-    fail '_infer_model_backend cached non-GGUF model → mlx' "expected 'mlx', got '$result'"
+    fail '_infer_model_backend cached non-GGUF model → llama.cpp' "expected 'llama.cpp', got '$result'"
   fi
 }
 
@@ -943,10 +919,10 @@ EOF
 
   local result
   result="$(PATH="${mock_bin}:$PATH" _infer_model_backend "$model_name")"
-  if assert_eq "$result" "mlx"; then
-    pass '_infer_model_backend cached non-GGUF model on Linux → mlx'
+  if assert_eq "$result" "llama.cpp"; then
+    pass '_infer_model_backend cached non-GGUF model on Linux → llama.cpp'
   else
-    fail '_infer_model_backend cached non-GGUF model on Linux → mlx' "expected 'mlx', got '$result'"
+    fail '_infer_model_backend cached non-GGUF model on Linux → llama.cpp' "expected 'llama.cpp', got '$result'"
   fi
 }
 
@@ -965,10 +941,10 @@ EOF
 
   local result
   result="$(PATH="${mock_bin}:$PATH" _infer_model_backend "bartowski/Qwen3-8B-4bit")"
-  if assert_eq "$result" "mlx"; then
-    pass '_infer_model_backend uncached model on arm64 → platform default (mlx)'
+  if assert_eq "$result" "llama.cpp"; then
+    pass '_infer_model_backend uncached model on arm64 → platform default (llama.cpp)'
   else
-    fail '_infer_model_backend uncached model on arm64 → platform default (mlx)' "expected 'mlx', got '$result'"
+    fail '_infer_model_backend uncached model on arm64 → platform default (llama.cpp)' "expected 'llama.cpp', got '$result'"
   fi
 }
 
@@ -987,10 +963,10 @@ EOF
 
   local result
   result="$(PATH="${mock_bin}:$PATH" _infer_model_backend "someuser/SomeModel-4bit")"
-  if assert_eq "$result" "mlx"; then
-    pass '_infer_model_backend uncached USER/MODEL on Linux → mlx assumption'
+  if assert_eq "$result" "llama.cpp"; then
+    pass '_infer_model_backend uncached USER/MODEL on Linux → llama.cpp'
   else
-    fail '_infer_model_backend uncached USER/MODEL on Linux → mlx assumption' "expected 'mlx', got '$result'"
+    fail '_infer_model_backend uncached USER/MODEL on Linux → llama.cpp' "expected 'llama.cpp', got '$result'"
   fi
 }
 
@@ -1021,7 +997,7 @@ EOF
 
   local result
   # A quant specifier unambiguously means GGUF even on arm64 where platform
-  # default would otherwise be mlx.
+  # default would otherwise still be llama.cpp.
   result="$(PATH="${mock_bin}:$PATH" _infer_pull_backend "user/some-model:Q4_K_M")"
   if assert_eq "$result" "llama.cpp"; then
     pass '_infer_pull_backend quant specifier → llama.cpp regardless of platform'
@@ -1094,10 +1070,10 @@ EOF
 
   local result
   result="$(PATH="${mock_bin}:$PATH" _infer_pull_backend "mlx-community/Qwen3-8B-4bit")"
-  if assert_eq "$result" "mlx"; then
-    pass '_infer_pull_backend plain MLX model on arm64 → mlx'
+  if assert_eq "$result" "llama.cpp"; then
+    pass '_infer_pull_backend plain MLX model on arm64 → llama.cpp'
   else
-    fail '_infer_pull_backend plain MLX model on arm64 → mlx' "expected 'mlx', got '$result'"
+    fail '_infer_pull_backend plain MLX model on arm64 → llama.cpp' "expected 'llama.cpp', got '$result'"
   fi
 }
 
@@ -1411,6 +1387,31 @@ EOF
   fi
 }
 
+test_resolve_model_command_context_defaults_to_llama_for_mlx_model() {
+  _create_unit_profile_fixture "coder-default" "$(cat <<'EOF'
+model=mlx-community/Qwen3-8B-4bit
+--temp 0.2
+[llama.cpp]
+--ctx-size 8192
+[mlx]
+--max-kv-size 4096
+EOF
+)"
+
+  _resolve_model_command_context run "" "coder-default"
+  local args_string="${REPLY_MODEL_COMMAND_PROFILE_ARGS[*]}"
+
+  if assert_eq "$REPLY_MODEL_COMMAND_BACKEND" "llama.cpp" && \
+     assert_eq "$REPLY_MODEL_COMMAND_MODEL_SPEC" "mlx-community/Qwen3-8B-4bit" && \
+     assert_contains "$args_string" "--temp 0.2" && \
+     assert_contains "$args_string" "--ctx-size 8192" && \
+     ! assert_contains "$args_string" "--max-kv-size" 2>/dev/null; then
+    pass 'resolve_model_command_context defaults to llama.cpp for MLX models'
+  else
+    fail 'resolve_model_command_context defaults to llama.cpp for MLX models' "unexpected backend='$REPLY_MODEL_COMMAND_BACKEND' model='$REPLY_MODEL_COMMAND_MODEL_SPEC' args='$args_string'"
+  fi
+}
+
 test_load_profile_strips_trailing_spaces_and_tabs() {
   _create_unit_profile_fixture "trailing-whitespace" $'model=mlx-community/Qwen3-8B-4bit   \n--temp 0.2\t\n[mlx]\t\n--max-tokens 128  '
 
@@ -1556,6 +1557,11 @@ test_completions_fish_generation() {
 
   if ! assert_contains "$out" "if test \"\$tok\" = \"--backend\""; then
     fail '_completions_fish generates fish backend parsing block' 'expected backend parsing block in generated fish completion script'
+    return
+  fi
+
+  if ! assert_contains "$out" "echo llama.cpp"; then
+    fail '_completions_fish generates llama.cpp default backend block' 'expected llama.cpp default in generated fish completion script'
     return
   fi
 
@@ -1942,6 +1948,7 @@ else
   test_parse_model_command_args_rejects_missing_backend_value
   test_resolve_model_command_context_filters_profile_for_llama_backend
   test_resolve_model_command_context_filters_profile_for_explicit_mlx_backend
+  test_resolve_model_command_context_defaults_to_llama_for_mlx_model
   test_load_profile_strips_trailing_spaces_and_tabs
   test_section_matches_common_always
   test_section_matches_command_sections

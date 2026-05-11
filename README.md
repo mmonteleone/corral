@@ -36,13 +36,13 @@ curl -fsSL https://github.com/mmonteleone/corral/releases/latest/download/corral
 > [!NOTE]
 > `~/.local/bin` may not be in `$PATH` by default on macOS. Add it: `export PATH="$HOME/.local/bin:$PATH"`
 
-Then install a backend and set up shell completions:
+Then install the backends and set up shell completions:
 
 ```sh
 corral install
 ```
 
-On Apple Silicon this installs **both** llama.cpp (`llama-cli`, `llama-server`) and MLX (`mlx-lm`). On other platforms, llama.cpp only. Restrict with `--backend llama.cpp` or `--backend mlx`.
+On Apple Silicon this installs **both** llama.cpp (`llama-cli`, `llama-server`) and MLX (`mlx-lm`). On other platforms, llama.cpp only. llama.cpp remains the default backend for `run`, `serve`, and `search`; use `--backend mlx` when you want MLX.
 
 `corral install` downloads the latest official llama.cpp release and, after prompting, adds it to `$PATH` and installs shell completions. Pass `--shell-profile` to accept automatically, or `--no-shell-profile` to skip. For MLX, corral installs `mlx-lm` via `uv` (offering to install `uv` via Homebrew if needed).
 
@@ -51,7 +51,7 @@ On Apple Silicon this installs **both** llama.cpp (`llama-cli`, `llama-server`) 
 ```sh
 corral search gemma                           # Find models on Hugging Face
 corral run unsloth/gemma-4-26B-A4B-it-GGUF    # Chat (downloads on first use)
-corral run mlx-community/gemma-4-26b-a4b-it-6bit  # MLX model (auto-detected)
+corral run --backend mlx mlx-community/gemma-4-26b-a4b-it-6bit  # MLX model (explicit)
 corral serve unsloth/gemma-4-26B-A4B-it-GGUF  # OpenAI-compatible API + web UI
 
 corral run unsloth/gemma-4-26B-A4B-it-GGUF -- --gpu-layers all -c 8192  # Extra flags
@@ -113,7 +113,7 @@ corral run unsloth/gemma-4-26B-A4B-it-GGUF            # default quant
 corral run unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q6_K    # specific quant
 ```
 
-MLX models use plain IDs without `:QUANT` (e.g. `mlx-community/gemma-4-26b-a4b-it-6bit`).
+MLX models use plain IDs without `:QUANT` (e.g. `mlx-community/gemma-4-26b-a4b-it-6bit`) and require `--backend mlx`.
 
 All models are stored in the standard Hugging Face cache (`~/.cache/huggingface/hub/`).
 

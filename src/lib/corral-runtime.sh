@@ -1143,9 +1143,8 @@ Arguments:
   QUANT         Optional quant tag to download a specific variant (llama.cpp only; e.g. Q4_K_M, UD-Q6_K).
 
 Downloads (pre-warms) a HuggingFace model into the local cache without running it.
-The backend is auto-detected from the model name by default: repos ending in -GGUF use
-llama-cli; all others use mlx_lm.generate on Apple Silicon or llama-cli elsewhere.
-Pass --backend to override when auto-detection is wrong.
+The backend defaults to llama.cpp. If you want MLX, pass --backend mlx.
+Repos ending in -GGUF still use llama-cli.
 EOF
 }
 
@@ -1310,11 +1309,10 @@ _infer_pull_backend_from_hf_metadata() {
 #      MLX backends never use colon-separated quant tags; a ":quant" suffix
 #      is an unambiguous GGUF signal regardless of repo naming.
 #   2. Repo name ends in -GGUF (case-insensitive) → llama.cpp.
-#   3. Remote HF metadata says GGUF or MLX → use that backend.
-#   4. Otherwise → platform default (mlx on macOS arm64, llama.cpp elsewhere).
-# Note: this differs from _infer_model_backend, which assumes 'mlx' for any
-# USER/MODEL spec without GGUF evidence. Pull can cheaply query HF metadata,
-# which avoids misrouting GGUF repos whose names omit the -GGUF suffix.
+#   3. Remote HF metadata says GGUF → llama.cpp.
+#   4. Otherwise -> platform default (llama.cpp everywhere).
+# Note: this still queries HF metadata first so obvious GGUF repos can be
+# routed explicitly before falling back to the llama.cpp default.
 _infer_pull_backend() {
   local model_spec="$1"
   local model_name="${model_spec%%:*}"
@@ -1325,12 +1323,6 @@ _infer_pull_backend() {
   fi
   if [[ "$model_name" =~ -[Gg][Gg][Uu][Ff]$ ]]; then
     printf 'llama.cpp'
-    return 0
-  fi
-  local metadata_backend
-  metadata_backend="$(_infer_pull_backend_from_hf_metadata "$model_name" || true)"
-  if [[ -n "$metadata_backend" ]]; then
-    printf '%s' "$metadata_backend"
     return 0
   fi
   platform_default_backend
@@ -1403,31 +1395,20 @@ _pull_mlx() {
 
 # ── run ───────────────────────────────────────────────────────────────────────
 
-# Infer the backend required for run/serve from the model spec plus any local
-# cache evidence.
+# Infer the backend required for run/serve.
 #
-# Decision tree, in order:
-#   1. Cached GGUF files under the model's HF cache dir -> llama.cpp
-#      Local cache is the strongest signal because it reflects what was actually
-#      downloaded, not just how the repo is named.
-#   2. Repo name ends in -GGUF -> llama.cpp
-#      This handles uncached but clearly GGUF-scoped HuggingFace repos.
-#   3. Any other USER/MODEL HuggingFace id -> mlx
-#      run/serve prefer the MLX path for non-GGUF repos; callers can override
-#      with --backend when the heuristic is wrong.
-#   4. Non-HF specs (no slash) -> platform default
-#      This catches local names that will later resolve through profiles.
-#
-# See also: _infer_pull_backend(), which uses a simpler heuristic because there
-# is no local cache evidence yet at pull time.
+# llama.cpp is the primary backend. The default path now resolves to llama.cpp
+# for every model/profile unless the caller explicitly overrides it with
+# --backend mlx. GGUF cache evidence and -GGUF repo names still resolve to
+# llama.cpp as before.
 _infer_model_backend() {
   local model_spec="$1"
-  # Strip quant spec: "user/model:Q4_K_M" → "user/model"
+  # Strip quant spec: "user/model:Q4_K_M" -> "user/model"
   local model_name="${model_spec%%:*}"
 
-  # Only check cache for valid USER/MODEL specs (contain a '/').
+  # GGUF evidence still routes to llama.cpp, but llama.cpp is now also the
+  # default for every non-explicit model/profile.
   if [[ "$model_name" == */* ]]; then
-    # Check for GGUF files in the local HF cache.
     local cache_dir
     cache_dir="$(model_name_to_cache_dir "$model_name" 2>/dev/null || true)"
     if [[ -n "$cache_dir" && -d "$cache_dir" ]] && cache_dir_has_gguf "$cache_dir"; then
@@ -1435,20 +1416,12 @@ _infer_model_backend() {
       return 0
     fi
 
-    # No cache evidence: use repo name as a signal.
-    # Repos ending in -GGUF are always llama.cpp regardless of platform.
     if [[ "$model_name" =~ -[Gg][Gg][Uu][Ff]$ ]]; then
       printf 'llama.cpp'
       return 0
     fi
-
-    # No GGUF evidence: assume MLX for USER/MODEL specs.
-    printf 'mlx'
-    return 0
   fi
 
-  # No local evidence; fall back to the platform default.
-  # On macOS Apple Silicon this is mlx; everywhere else it is llama.cpp.
   platform_default_backend
 }
 
@@ -1556,19 +1529,16 @@ Arguments:
   PROFILE       A saved profile name (see: $SCRIPT_NAME list --profiles)
 
 Options:
-  --backend <backend>  Select backend: mlx or llama.cpp (default: auto-detected).
+  --backend <backend>  Select backend: mlx or llama.cpp (default: llama.cpp).
 
 Downloads the model if needed and runs it interactively.
-The backend is auto-detected with a GGUF-first heuristic: if local cache for the
-model contains GGUF files, corral uses llama-cli; otherwise corral assumes mlx for
-HuggingFace USER/MODEL specs. Non-HF specs fall back to platform default.
-If this guess is wrong (or mlx is unsupported on your platform), use --backend
-to override explicitly.
+The backend defaults to llama.cpp. If you want MLX, pass --backend mlx.
+GGUF cache evidence and -GGUF repo names still use llama-cli.
 
 Pass additional backend-specific arguments after '--'.
 Example:
   $SCRIPT_NAME run unsloth/gemma-4-E4B-it-GGUF -- -ngl 999 -c 8192
-  $SCRIPT_NAME run mlx-community/Qwen3-8B-4bit
+  $SCRIPT_NAME run --backend mlx mlx-community/Qwen3-8B-4bit
   $SCRIPT_NAME run coder
 EOF
 }
@@ -1626,19 +1596,16 @@ Arguments:
   PROFILE       A saved profile name (see: $SCRIPT_NAME list --profiles)
 
 Options:
-  --backend <backend>  Override backend: mlx or llama.cpp. Default: auto-detected.
+  --backend <backend>  Override backend: mlx or llama.cpp. Default: llama.cpp.
 
 Downloads the model if needed and serves it as an OpenAI-compatible endpoint.
-The backend is auto-detected with a GGUF-first heuristic: if local cache for the
-model contains GGUF files, corral uses llama-server; otherwise corral assumes mlx
-for HuggingFace USER/MODEL specs. Non-HF specs fall back to platform default.
-If this guess is wrong (or mlx is unsupported on your platform), use --backend
-to override explicitly.
+The backend defaults to llama.cpp. If you want MLX, pass --backend mlx.
+GGUF cache evidence and -GGUF repo names still use llama-server.
 
 Pass additional backend-specific arguments after '--'.
 Example:
   $SCRIPT_NAME serve unsloth/gemma-4-E4B-it-GGUF -- --port 8081
-  $SCRIPT_NAME serve mlx-community/Qwen3-8B-4bit -- --port 8081
+  $SCRIPT_NAME serve --backend mlx mlx-community/Qwen3-8B-4bit -- --port 8081
   $SCRIPT_NAME serve coder
 EOF
 }

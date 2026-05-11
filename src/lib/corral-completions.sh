@@ -45,8 +45,8 @@ complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a remove    -d 
 complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a rm        -d 'Remove backend-scoped model cache entry (alias)'
 complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a copy      -d 'Copy a profile or template'
 complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a cp        -d 'Copy a profile or template (alias)'
-complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a run       -d 'Run a model (mlx or llama.cpp)'
-complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a serve     -d 'Serve a model (mlx or llama.cpp)'
+complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a run       -d 'Run a model (llama.cpp default; MLX via --backend)'
+complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a serve     -d 'Serve a model (llama.cpp default; MLX via --backend)'
 complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a launch    -d 'Configure and launch a supported coding harness'
 complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a ps        -d 'Show running llama processes'
 complete -c $sn -n "not __fish_seen_subcommand_from \$commands" -a show      -d 'Show details about a profile, template, or model'
@@ -114,11 +114,7 @@ function __corral_runtime_backend
     end
   end
 
-  if test (uname -s) = Darwin; and test (uname -m) = arm64
-    echo mlx
-  else
-    echo llama.cpp
-  end
+  echo llama.cpp
 end
 
 function __corral_profiles
@@ -239,8 +235,8 @@ _corral() {
         'list:List cached models, installed engines, profiles, and templates' 'ls:List cached models, installed engines, profiles, and templates'
         'remove:Remove backend-scoped model cache entry' 'rm:Remove backend-scoped model cache entry'
         'copy:Copy a profile or template' 'cp:Copy a profile or template'
-        'run:Run a model (mlx or llama.cpp)'
-        'serve:Serve a model (mlx or llama.cpp)'
+        'run:Run a model (llama.cpp default; MLX via --backend)'
+        'serve:Serve a model (llama.cpp default; MLX via --backend)'
         'launch:Configure and launch a supported coding harness'
         'ps:Show running llama processes'
         'show:Show details about a profile, template, or model'

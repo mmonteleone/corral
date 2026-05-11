@@ -17,13 +17,12 @@ Arguments:
   QUERY         Optional search term (e.g. "gemma", "qwen", "llama")
 
 Searches HuggingFace for backend-compatible models.
-If --backend is omitted, the platform default backend is used: MLX on macOS
-Apple Silicon, otherwise llama.cpp.
+If --backend is omitted, the platform default backend is used: llama.cpp.
 
 Options:
   --backend <backend>
                 Backend search mode: llama.cpp (filter=gguf) or mlx (filter=mlx).
-                If omitted, defaults to the platform backend.
+                If omitted, defaults to llama.cpp.
   --sort <by>   Sort order: trending (default), downloads, newest.
   --limit <n>   Maximum number of results. Defaults to 20.
   --quants      llama.cpp only. Also show available quant variants per model

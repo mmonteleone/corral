@@ -91,9 +91,9 @@ cmd_help() {
 Usage: $SCRIPT_NAME <command> [options]
 
 Commands:
-  install              Install inference backend (mlx or llama.cpp; default: platform-detected)
-  run <MODEL_NAME>     Download and run a HuggingFace model (mlx or llama.cpp)
-  serve <MODEL_NAME>   Download and serve a HuggingFace model (mlx or llama.cpp)
+  install              Install inference backend(s) (llama.cpp primary; MLX optional)
+  run <MODEL_NAME>     Download and run a HuggingFace model (llama.cpp default; MLX via --backend)
+  serve <MODEL_NAME>   Download and serve a HuggingFace model (llama.cpp default; MLX via --backend)
   launch <TOOL>        Configure and launch a supported coding harness
   pull <MODEL_NAME>    Download (prefetch) model artifacts without running
   search [QUERY]       Search Hugging Face models

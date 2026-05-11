@@ -996,12 +996,13 @@ EOF
     return
   fi
 
-  if ! assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/curl.log")" "huggingface.co/api/models/${model_name}"; then
-    fail 'pull uses HF metadata to detect GGUF backend' 'expected pull to query Hugging Face model metadata before dispatch'
+  local curl_log="${CORRAL_TEST_LOG_DIR}/curl.log"
+  if [[ -f "$curl_log" ]] && assert_contains "$(cat "$curl_log")" "huggingface.co/api/models/${model_name}"; then
+    fail 'pull defaults to llama.cpp for GGUF metadata' 'did not expect a Hugging Face metadata lookup for pull'
     return
   fi
 
-  pass 'pull uses HF metadata to detect GGUF backend'
+  pass 'pull defaults to llama.cpp for GGUF metadata'
 }
 
 test_pull_model_before_backend_flag() {
@@ -1790,6 +1791,7 @@ test_mlx_run_with_profile() {
   local run_log="${TEST_DIR}/mlx-run.log"
 
   write_mock_uname "${TEST_DIR}/bin/uname" "Darwin" "arm64"
+  unset CORRAL_INSTALL_ROOT
 
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
   mkdir -p "$CORRAL_PROFILES_DIR"
@@ -1799,33 +1801,33 @@ model=mlx-community/Qwen2.5-7B-Instruct-4bit
 --max-tokens 64
 EOF
 
-  cat >"${TEST_DIR}/bin/mlx_lm.chat" <<'EOF'
+  cat >"${TEST_DIR}/bin/llama-cli" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >"$CORRAL_MLX_RUN_LOG"
 exit 0
 EOF
-  chmod +x "${TEST_DIR}/bin/mlx_lm.chat"
+  chmod +x "${TEST_DIR}/bin/llama-cli"
   export CORRAL_MLX_RUN_LOG="$run_log"
 
   run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" run coder
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'mlx run infers backend from profile model' "run failed: $(cat "$stderr_file")"
+    fail 'run defaults to llama.cpp for MLX profiles' "run failed: $(cat "$stderr_file")"
     return
   fi
 
   local args
   args="$(cat "$run_log")"
-  if ! assert_contains "$args" '--model mlx-community/Qwen2.5-7B-Instruct-4bit'; then
-    fail 'mlx run infers backend from profile model' "expected model from profile, got: $args"
+  if ! assert_contains "$args" '-hf mlx-community/Qwen2.5-7B-Instruct-4bit'; then
+    fail 'run defaults to llama.cpp for MLX profiles' "expected model from profile, got: $args"
     return
   fi
   if ! assert_contains "$args" '--temp 0.2' || ! assert_contains "$args" '--max-tokens 64'; then
-    fail 'mlx run infers backend from profile model' "expected flags from profile, got: $args"
+    fail 'run defaults to llama.cpp for MLX profiles' "expected flags from profile, got: $args"
     return
   fi
 
-  pass 'mlx run infers backend from profile model'
+  pass 'run defaults to llama.cpp for MLX profiles'
 }
 
 test_mlx_run_profile_backend_sections() {
@@ -1860,14 +1862,15 @@ EOF
   chmod +x "${TEST_DIR}/bin/mlx_lm.chat"
   export CORRAL_MLX_RUN_LOG="$run_log"
 
-  # Ensure model exists in HF cache so backend infers mlx from cache.
+  # Ensure model exists in HF cache so explicit MLX coverage can still use
+  # backend-specific profile sections.
   local mlx_cache_dir="${HOME}/.cache/huggingface/hub/models--mlx-community--Qwen2.5-7B-Instruct-4bit"
   mkdir -p "${mlx_cache_dir}/snapshots/abc123"
   : >"${mlx_cache_dir}/snapshots/abc123/model.safetensors"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" run mixed
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" run --backend mlx mixed
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'mlx run loads backend-specific profile sections' "run failed: $(cat "$stderr_file")"
+    fail 'run --backend mlx loads backend-specific profile sections' "run failed: $(cat "$stderr_file")"
     return
   fi
 
@@ -1875,27 +1878,27 @@ EOF
   args="$(cat "$run_log")"
   # Common flag: should be present.
   if ! assert_contains "$args" '--temp 0.2'; then
-    fail 'mlx run loads backend-specific profile sections' "expected common --temp, got: $args"
+    fail 'run --backend mlx loads backend-specific profile sections' "expected common --temp, got: $args"
     return
   fi
   # [mlx.run]: should be present.
   if ! assert_contains "$args" '--max-tokens 64'; then
-    fail 'mlx run loads backend-specific profile sections' "expected [mlx.run] flag, got: $args"
+    fail 'run --backend mlx loads backend-specific profile sections' "expected [mlx.run] flag, got: $args"
     return
   fi
   # [llama.cpp]: should be absent.
   if assert_contains "$args" '--flash-attn'; then
-    fail 'mlx run excludes llama.cpp backend sections' "unexpected llama.cpp flag in: $args"
+    fail 'run --backend mlx excludes llama.cpp backend sections' "unexpected llama.cpp flag in: $args"
     return
   fi
   # [llama.cpp.serve]: should be absent.
   if assert_contains "$args" '--cache-reuse'; then
-    fail 'mlx run excludes llama.cpp.serve section' "unexpected llama.cpp.serve flag in: $args"
+    fail 'run --backend mlx excludes llama.cpp.serve section' "unexpected llama.cpp.serve flag in: $args"
     return
   fi
 
-  pass 'mlx run loads backend-specific profile sections'
-  pass 'mlx run excludes llama.cpp backend sections'
+  pass 'run --backend mlx loads backend-specific profile sections'
+  pass 'run --backend mlx excludes llama.cpp backend sections'
 }
 
 test_profile_set_from_template_preserves_backend_sections() {
@@ -2002,6 +2005,7 @@ test_mlx_serve_with_profile() {
   local serve_log="${TEST_DIR}/mlx-serve.log"
 
   write_mock_uname "${TEST_DIR}/bin/uname" "Darwin" "arm64"
+  unset CORRAL_INSTALL_ROOT
 
   export CORRAL_PROFILES_DIR="${HOME}/.config/corral/profiles"
   mkdir -p "$CORRAL_PROFILES_DIR"
@@ -2011,34 +2015,34 @@ model=mlx-community/Qwen2.5-7B-Instruct-4bit
 --port 8899
 EOF
 
-  cat >"${TEST_DIR}/bin/mlx_lm.server" <<'EOF'
+  cat >"${TEST_DIR}/bin/llama-server" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >"$CORRAL_MLX_SERVE_LOG"
 exit 0
 EOF
-  chmod +x "${TEST_DIR}/bin/mlx_lm.server"
+  chmod +x "${TEST_DIR}/bin/llama-server"
   export CORRAL_MLX_SERVE_LOG="$serve_log"
 
   run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" serve coder
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'mlx serve infers backend from profile model' "serve failed: $(cat "$stderr_file")"
+    fail 'serve defaults to llama.cpp for MLX profiles' "serve failed: $(cat "$stderr_file")"
     return
   fi
 
   local args
   args="$(cat "$serve_log")"
-  if ! assert_contains "$args" '--model mlx-community/Qwen2.5-7B-Instruct-4bit'; then
-    fail 'mlx serve infers backend from profile model' "expected model from profile, got: $args"
+  if ! assert_contains "$args" '-hf mlx-community/Qwen2.5-7B-Instruct-4bit'; then
+    fail 'serve defaults to llama.cpp for MLX profiles' "expected model from profile, got: $args"
     return
   fi
 
   if ! assert_contains "$args" '--temp 0.2' || ! assert_contains "$args" '--port 8899'; then
-    fail 'mlx serve infers backend from profile model' "expected flags from profile, got: $args"
+    fail 'serve defaults to llama.cpp for MLX profiles' "expected flags from profile, got: $args"
     return
   fi
 
-  pass 'mlx serve infers backend from profile model'
+  pass 'serve defaults to llama.cpp for MLX profiles'
 }
 
 test_llama_run_profile_backend_sections() {
@@ -2145,36 +2149,33 @@ EOF
 test_mlx_pull_dispatches_generate() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
-  local pull_log="${TEST_DIR}/mlx-pull.log"
+  local cache_dir="${HOME}/.cache/huggingface/hub/models--mlx-community--Qwen2.5-7B-Instruct-4bit"
 
   write_mock_uname "${TEST_DIR}/bin/uname" "Darwin" "arm64"
+  unset CORRAL_INSTALL_ROOT
 
-  cat >"${TEST_DIR}/bin/mlx_lm.generate" <<'EOF'
+  cat >"${TEST_DIR}/bin/llama-cli" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" >"$CORRAL_MLX_PULL_LOG"
+mkdir -p "$CORRAL_EXPECTED_CACHE_DIR/snapshots/abc123"
+: >"$CORRAL_EXPECTED_CACHE_DIR/snapshots/abc123/model.safetensors"
 exit 0
 EOF
-  chmod +x "${TEST_DIR}/bin/mlx_lm.generate"
-  export CORRAL_MLX_PULL_LOG="$pull_log"
+  chmod +x "${TEST_DIR}/bin/llama-cli"
+  export CORRAL_EXPECTED_CACHE_DIR="$cache_dir"
 
   run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" pull mlx-community/Qwen2.5-7B-Instruct-4bit
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'mlx pull dispatches to mlx_lm.generate' "pull failed: $(cat "$stderr_file")"
+    fail 'pull defaults to llama.cpp for MLX models' "pull failed: $(cat "$stderr_file")"
     return
   fi
 
-  if ! assert_contains "$(cat "$pull_log")" '--model mlx-community/Qwen2.5-7B-Instruct-4bit'; then
-    fail 'mlx pull dispatches to mlx_lm.generate' "expected model arg, got: $(cat "$pull_log")"
+  if [[ ! -d "$cache_dir" ]]; then
+    fail 'pull defaults to llama.cpp for MLX models' "expected cache dir to be created, got: $cache_dir"
     return
   fi
 
-  if ! assert_contains "$(cat "$pull_log")" '--max-tokens 1'; then
-    fail 'mlx pull dispatches to mlx_lm.generate' "expected max-tokens warm-up arg, got: $(cat "$pull_log")"
-    return
-  fi
-
-  pass 'mlx pull dispatches to mlx_lm.generate'
+  pass 'pull defaults to llama.cpp for MLX models'
 }
 
 test_mlx_pull_quant_spec_warns() {
@@ -2229,22 +2230,20 @@ test_mlx_list_shows_cached_models() {
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >"$CORRAL_MLX_PULL_LOG"
+mkdir -p "$CORRAL_EXPECTED_CACHE_DIR/snapshots/abc123"
+: >"$CORRAL_EXPECTED_CACHE_DIR/snapshots/abc123/model.safetensors"
 exit 0
 EOF
   chmod +x "${TEST_DIR}/bin/mlx_lm.generate"
   export CORRAL_MLX_PULL_LOG="$pull_log"
+  local cache_dir="${HOME}/.cache/huggingface/hub/models--mlx-community--Qwen2.5-7B-Instruct-4bit"
+  export CORRAL_EXPECTED_CACHE_DIR="$cache_dir"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" pull "$model_name"
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" pull --backend mlx "$model_name"
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'mlx list reads cached mlx models' "mlx pull failed: $(cat "$stderr_file")"
     return
   fi
-
-  # Build a deterministic cache fixture; mocked mlx_lm.generate does not write
-  # HF cache files in tests.
-  local cache_dir="${HOME}/.cache/huggingface/hub/models--mlx-community--Qwen2.5-7B-Instruct-4bit"
-  mkdir -p "${cache_dir}/snapshots/abc123"
-  : >"${cache_dir}/snapshots/abc123/model.safetensors"
 
   run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --backend mlx --quiet --models
   if [[ $RUN_STATUS -ne 0 ]]; then
@@ -4009,36 +4008,42 @@ test_search_default_backend_quants_warns_on_apple_silicon() {
 
   write_mock_uname "${TEST_DIR}/bin/uname" "Darwin" "arm64"
 
-  write_hf_search_fixture_mlx "$CORRAL_TEST_FIXTURES_DIR"
+  write_hf_search_fixture "$CORRAL_TEST_FIXTURES_DIR"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search qwen --quants
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma --quants
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'search default backend warns for quants on Apple Silicon' "search failed: $(cat "$stderr_file")"
+    fail 'search default backend uses llama.cpp quants on Apple Silicon' "search failed: $(cat "$stderr_file")"
     return
   fi
 
-  if ! assert_contains "$(cat "$stderr_file")" '--quants is only supported for llama.cpp/GGUF search'; then
-    fail 'search default backend warns for quants on Apple Silicon' "expected MLX quant warning, got: $(cat "$stderr_file")"
+  if assert_contains "$(cat "$stderr_file")" '--quants is only supported for llama.cpp/GGUF search'; then
+    fail 'search default backend uses llama.cpp quants on Apple Silicon' "did not expect MLX quant warning, got: $(cat "$stderr_file")"
     return
   fi
 
   if ! assert_contains "$(cat "$stdout_file")" 'BACKEND'; then
-    fail 'search default backend warns for quants on Apple Silicon' "expected BACKEND header, got: $(cat "$stdout_file")"
+    fail 'search default backend uses llama.cpp quants on Apple Silicon' "expected BACKEND header, got: $(cat "$stdout_file")"
     return
   fi
 
-  if ! assert_contains "$(cat "$stdout_file")" 'mlx'; then
-    fail 'search default backend warns for quants on Apple Silicon' "expected backend value 'mlx' in output, got: $(cat "$stdout_file")"
+  if ! assert_contains "$(cat "$stdout_file")" 'llama.cpp'; then
+    fail 'search default backend uses llama.cpp quants on Apple Silicon' "expected backend value 'llama.cpp' in output, got: $(cat "$stdout_file")"
     return
   fi
 
-  if assert_contains "$(cat "$stdout_file")" '  mlx-community/Qwen2.5-7B-Instruct-4bit:' || \
-     assert_contains "$(cat "$stdout_file")" '  org/qwen-mlx-tagged-model:'; then
-    fail 'search default backend warns for quants on Apple Silicon' "did not expect quant child rows in output: $(cat "$stdout_file")"
+  if ! assert_contains "$(cat "$stdout_file")" 'demo/gemma-GGUF'; then
+    fail 'search default backend uses llama.cpp quants on Apple Silicon' "expected GGUF result in output, got: $(cat "$stdout_file")"
     return
   fi
 
-  pass 'search default backend warns for quants on Apple Silicon'
+  local curl_log
+  curl_log="$(cat "${CORRAL_TEST_LOG_DIR}/curl.log")"
+  if ! assert_contains "$curl_log" 'filter=gguf'; then
+    fail 'search default backend uses llama.cpp quants on Apple Silicon' "expected filter=gguf in request URL, got: $curl_log"
+    return
+  fi
+
+  pass 'search default backend uses llama.cpp quants on Apple Silicon'
 }
 
 test_browse_opens_url() {
@@ -5562,9 +5567,9 @@ test_search_defaults_to_platform_backend_on_apple_silicon() {
 
   write_mock_uname "${TEST_DIR}/bin/uname" "Darwin" "arm64"
 
-  write_hf_search_fixture_mlx "$CORRAL_TEST_FIXTURES_DIR"
+  write_hf_search_fixture "$CORRAL_TEST_FIXTURES_DIR"
 
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search qwen
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma
   if [[ $RUN_STATUS -ne 0 ]]; then
     fail 'search defaults to platform backend on Apple Silicon' "search failed: $(cat "$stderr_file")"
     return
@@ -5583,35 +5588,35 @@ test_search_defaults_to_platform_backend_on_apple_silicon() {
     return
   fi
 
-  if ! assert_contains "$out" 'mlx-community/Qwen2.5-7B-Instruct-4bit'; then
-    fail 'search defaults to platform backend on Apple Silicon' "expected default MLX result in output, got: $out"
+  if ! assert_contains "$out" 'demo/gemma-GGUF'; then
+    fail 'search defaults to platform backend on Apple Silicon' "expected default GGUF result in output, got: $out"
     return
   fi
 
-  if ! assert_contains "$out" 'org/qwen-mlx-tagged-model'; then
-    fail 'search defaults to platform backend on Apple Silicon' "expected second MLX result in output, got: $out"
+  if ! assert_contains "$out" 'demo/gemma-small-GGUF'; then
+    fail 'search defaults to platform backend on Apple Silicon' "expected second GGUF result in output, got: $out"
     return
   fi
 
-  if ! assert_contains "$out" 'mlx'; then
-    fail 'search defaults to platform backend on Apple Silicon' "expected backend value 'mlx' in output, got: $out"
+  if ! assert_contains "$out" 'llama.cpp'; then
+    fail 'search defaults to platform backend on Apple Silicon' "expected backend value 'llama.cpp' in output, got: $out"
     return
   fi
 
-  if assert_contains "$out" 'org/gguf-only-model' || assert_contains "$out" 'org/transformers-model'; then
-    fail 'search defaults to platform backend on Apple Silicon' "did not expect non-MLX results in output, got: $out"
+  if assert_contains "$out" 'demo/not-gguf-transformers'; then
+    fail 'search defaults to platform backend on Apple Silicon' "did not expect non-GGUF results in output, got: $out"
     return
   fi
 
   local curl_log
   curl_log="$(cat "${CORRAL_TEST_LOG_DIR}/curl.log")"
-  if ! assert_contains "$curl_log" 'filter=mlx'; then
-    fail 'search defaults to platform backend on Apple Silicon' "expected filter=mlx in request URL, got: $curl_log"
+  if ! assert_contains "$curl_log" 'filter=gguf'; then
+    fail 'search defaults to platform backend on Apple Silicon' "expected filter=gguf in request URL, got: $curl_log"
     return
   fi
 
-  if assert_contains "$curl_log" 'filter=gguf'; then
-    fail 'search defaults to platform backend on Apple Silicon' "did not expect filter=gguf in request URL, got: $curl_log"
+  if assert_contains "$curl_log" 'filter=mlx'; then
+    fail 'search defaults to platform backend on Apple Silicon' "did not expect filter=mlx in request URL, got: $curl_log"
     return
   fi
 
