@@ -3383,7 +3383,7 @@ test_list_ignores_mmproj_sidecar_quants() {
   local stderr_file="${TEST_DIR}/stderr"
 
   create_gguf_fixture "models--demo--vision-GGUF" "vision-Q4_K_M.gguf" 2048
-  create_gguf_fixture "models--demo--vision-GGUF" "mmproj-BF16.gguf" 1024
+  create_gguf_fixture "models--demo--vision-GGUF" "vision-mmproj.gguf" 1024
 
   run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --quiet
   if [[ $RUN_STATUS -ne 0 ]]; then
@@ -3398,8 +3398,8 @@ test_list_ignores_mmproj_sidecar_quants() {
     return
   fi
 
-  if assert_contains "$out" 'demo/vision-GGUF:BF16'; then
-    fail 'list ignores mmproj sidecar quants' "did not expect mmproj BF16 sidecar row, got: $out"
+  if assert_contains "$out" 'demo/vision-GGUF:vision-mmproj'; then
+    fail 'list ignores mmproj sidecar quants' "did not expect suffix mmproj sidecar row, got: $out"
     return
   fi
 
