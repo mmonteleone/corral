@@ -1442,6 +1442,20 @@ test_load_profile_strips_trailing_spaces_and_tabs() {
   fi
 }
 
+test_load_profile_supports_indented_and_trailing_comments() {
+  _create_unit_profile_fixture "commented-profile" $'   # leading comment\n   model=mlx-community/Qwen3-8B-4bit   # model comment\n   --temp 0.2   # flag comment\n   [mlx]\n      # section comment\n   --max-tokens 128   # trailing comment'
+
+  load_profile "commented-profile" run mlx
+  local args_string="${REPLY_PROFILE_ARGS[*]}"
+
+  if assert_eq "$REPLY_PROFILE_MODEL" "mlx-community/Qwen3-8B-4bit" && \
+     assert_eq "$args_string" "--temp 0.2 --max-tokens 128"; then
+    pass 'load_profile supports indented and trailing comments'
+  else
+    fail 'load_profile supports indented and trailing comments' "unexpected model='$REPLY_PROFILE_MODEL' args='$args_string'"
+  fi
+}
+
 # ── _section_matches ──────────────────────────────────────────────────────────
 
 test_section_matches_common_always() {
