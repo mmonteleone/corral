@@ -117,8 +117,8 @@ load_profile() {
   local section="common"
   local line
   while IFS= read -r line || [[ -n "$line" ]]; do
-    line="$(_trim_trailing_whitespace "$line")"
-    [[ -z "$line" || "$line" == '#'* ]] && continue
+    line="$(_strip_profile_line_comment "$line")"
+    [[ -z "$line" ]] && continue
 
     case "$line" in
       '[run]')             section="run";             continue ;;
@@ -356,6 +356,22 @@ _section_matches() {
       return 1
       ;;
   esac
+}
+
+_strip_profile_line_comment() {
+  local line="$1"
+
+  line="${line#"${line%%[![:space:]]*}"}"
+  [[ -z "$line" ]] && return 0
+  [[ "$line" == '#'* ]] && return 0
+
+  case "$line" in
+    *[[:space:]]#*)
+      line="${line%%[[:space:]]#*}"
+      ;;
+  esac
+
+  _trim_trailing_whitespace "$line"
 }
 
 _emit_flag_lines_from_args() {
