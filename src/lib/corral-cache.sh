@@ -71,8 +71,9 @@ normalize_quant_tag() {
 }
 
 # Find cached model GGUF file paths in a model's HF cache snapshots directory.
-# Auxiliary projector GGUFs (mmproj-*.gguf) are intentionally excluded; they are
-# sidecar files for multimodal models, not independently runnable quant variants.
+# Auxiliary projector GGUFs with an `mmproj` stem token are intentionally
+# excluded; they are sidecar files for multimodal models, not independently
+# runnable quant variants.
 # Prints one full path per line, deduplicated and sorted.
 find_cached_gguf_paths() {
   local cache_dir="$1"
@@ -331,13 +332,14 @@ _find_cached_gguf_paths() {
 }
 
 # Return success for GGUF sidecar files that should not be treated as model
-# quant variants. llama.cpp may automatically fetch mmproj-*.gguf projectors for
+# quant variants. llama.cpp may automatically fetch mmproj projectors for
 # multimodal models; listing them as BF16/F16/F32 model quants is misleading.
 _is_auxiliary_gguf_filename() {
   local filename="$1"
+  local stem="${filename%.gguf}"
   local lower
-  lower="$(printf '%s' "$filename" | tr '[:upper:]' '[:lower:]')"
-  [[ "$lower" == mmproj*.gguf ]]
+  lower="$(printf '%s' "$stem" | tr '[:upper:]' '[:lower:]')"
+  [[ "$lower" =~ (^|[-._])mmproj($|[-._]) ]]
 }
 
 # List the distinct quant tags present in a model's cache directory.

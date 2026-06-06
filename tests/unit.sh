@@ -209,6 +209,23 @@ test_find_cached_gguf_files_ignores_mmproj_sidecars() {
   fi
 }
 
+test_find_cached_gguf_files_ignores_suffix_mmproj_sidecars() {
+  local cache_dir="${TEST_ROOT}/models--test--suffix-mmproj"
+  local snapshot_dir="${cache_dir}/snapshots/abc123"
+  mkdir -p "$snapshot_dir"
+  touch "${snapshot_dir}/model-Q4_K_M.gguf"
+  touch "${snapshot_dir}/gemma-4-26B-it-mmproj.gguf"
+
+  local result
+  result="$(find_cached_gguf_files "$cache_dir")"
+  if assert_contains "$result" "model-Q4_K_M.gguf" && \
+     ! assert_contains "$result" "gemma-4-26B-it-mmproj.gguf" 2>/dev/null; then
+    pass 'find_cached_gguf_files ignores suffix mmproj sidecars'
+  else
+    fail 'find_cached_gguf_files ignores suffix mmproj sidecars' "got: $result"
+  fi
+}
+
 # ── find_gguf_by_quant ──────────────────────────────────────────────────────
 
 test_find_gguf_by_quant_match() {
@@ -1874,6 +1891,7 @@ else
   test_cache_dir_to_model_name
   test_find_cached_gguf_files
   test_find_cached_gguf_files_ignores_mmproj_sidecars
+  test_find_cached_gguf_files_ignores_suffix_mmproj_sidecars
   test_find_gguf_by_quant_match
   test_find_gguf_by_quant_case_insensitive
   test_cached_quant_tags
