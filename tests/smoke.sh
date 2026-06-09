@@ -3182,7 +3182,7 @@ test_list_includes_templates_section() {
     fail 'list includes templates section' "expected user template row, got: $out"
     return
   fi
-  if ! assert_contains "$out" 'general' || ! assert_contains "$out" 'qwen-3-general' || ! assert_contains "$out" 'unsloth/Qwen3.6-35B-A3B-GGUF'; then
+  if ! assert_contains "$out" 'general' || ! assert_contains "$out" 'qwen-3-general' || ! assert_contains "$out" 'unsloth/Qwen3.6-35B-A3B-MTP-GGUF:UD-Q4_K_XL'; then
     fail 'list includes templates section' "expected built-in templates in list output, got: $out"
     return
   fi
@@ -4855,7 +4855,7 @@ test_profile_set_builtin_uses_default_model() {
 
   local content
   content="$(cat "$stdout_file")"
-  if ! assert_contains "$content" 'model=unsloth/Qwen3.6-35B-A3B-GGUF'; then
+  if ! assert_contains "$content" 'model=unsloth/Qwen3.6-35B-A3B-MTP-GGUF:UD-Q4_K_XL'; then
     fail 'profile set builtin uses default model' "expected default model from built-in template, got: $content"
     return
   fi

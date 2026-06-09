@@ -1543,7 +1543,7 @@ test_collect_template_entries_includes_builtins() {
   result="$(collect_template_entries)"
   if assert_contains "$result" 'code|built-in|(none)' && \
      assert_contains "$result" 'general|built-in|(none)' && \
-     assert_contains "$result" 'qwen-3-general|built-in|unsloth/Qwen3.6-35B-A3B-GGUF'; then
+     assert_contains "$result" 'qwen-3-general|built-in|unsloth/Qwen3.6-35B-A3B-MTP-GGUF:UD-Q4_K_XL'; then
     pass 'collect_template_entries includes built-ins with default models'
   else
     fail 'collect_template_entries includes built-ins with default models' "got: $result"
