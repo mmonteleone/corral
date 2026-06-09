@@ -226,6 +226,23 @@ test_find_cached_gguf_files_ignores_suffix_mmproj_sidecars() {
   fi
 }
 
+test_find_cached_gguf_files_ignores_mtp_sidecars() {
+  local cache_dir="${TEST_ROOT}/models--test--mtp"
+  local snapshot_dir="${cache_dir}/snapshots/abc123"
+  mkdir -p "$snapshot_dir"
+  touch "${snapshot_dir}/model-Q4_K_M.gguf"
+  touch "${snapshot_dir}/mtp-model.gguf"
+
+  local result
+  result="$(find_cached_gguf_files "$cache_dir")"
+  if assert_contains "$result" "model-Q4_K_M.gguf" && \
+     ! assert_contains "$result" "mtp-model.gguf" 2>/dev/null; then
+    pass 'find_cached_gguf_files ignores mtp sidecars'
+  else
+    fail 'find_cached_gguf_files ignores mtp sidecars' "got: $result"
+  fi
+}
+
 # ── find_gguf_by_quant ──────────────────────────────────────────────────────
 
 test_find_gguf_by_quant_match() {
@@ -349,12 +366,17 @@ test_collect_cached_model_entries() {
   local snapshot_dir="${cache_dir}/snapshots/abc123"
   mkdir -p "$snapshot_dir"
   printf 'x' > "${snapshot_dir}/model-Q4_K_M.gguf"
+  printf 'x' > "${snapshot_dir}/mmproj-BF16.gguf"
+  printf 'x' > "${snapshot_dir}/mtp-modelA.gguf"
 
   local result
   result="$(collect_cached_model_entries)"
   HF_HUB_DIR="$old_hf_hub_dir"
 
-  if assert_contains "$result" "alice/modelA" && assert_contains "$result" "Q4_K_M"; then
+  if assert_contains "$result" "alice/modelA" && \
+     assert_contains "$result" "Q4_K_M" && \
+     ! assert_contains "$result" "mmproj-BF16" 2>/dev/null && \
+     ! assert_contains "$result" "mtp-modelA" 2>/dev/null; then
     pass 'collect_cached_model_entries'
   else
     fail 'collect_cached_model_entries' "got: $result"
@@ -1521,7 +1543,7 @@ test_collect_template_entries_includes_builtins() {
   result="$(collect_template_entries)"
   if assert_contains "$result" 'code|built-in|(none)' && \
      assert_contains "$result" 'general|built-in|(none)' && \
-     assert_contains "$result" 'qwen-3-general|built-in|unsloth/Qwen3.6-35B-A3B-GGUF'; then
+     assert_contains "$result" 'qwen-3-general|built-in|unsloth/Qwen3.6-35B-A3B-MTP-GGUF:UD-Q4_K_XL'; then
     pass 'collect_template_entries includes built-ins with default models'
   else
     fail 'collect_template_entries includes built-ins with default models' "got: $result"
@@ -1906,6 +1928,7 @@ else
   test_find_cached_gguf_files
   test_find_cached_gguf_files_ignores_mmproj_sidecars
   test_find_cached_gguf_files_ignores_suffix_mmproj_sidecars
+  test_find_cached_gguf_files_ignores_mtp_sidecars
   test_find_gguf_by_quant_match
   test_find_gguf_by_quant_case_insensitive
   test_cached_quant_tags

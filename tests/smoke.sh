@@ -1004,6 +1004,82 @@ EOF
   pass 'pull uses HF metadata to detect GGUF backend'
 }
 
+test_pull_prefetches_mtp_sidecar_and_hides_sidecar_row() {
+  local install_root="${HOME}/install-root"
+  local current_link="${install_root}/current"
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+  local args_log="${TEST_DIR}/llama-cli-args.log"
+  local model_spec='demo/gemma-4-26B-A4B-it-qat-GGUF:UD-Q4_K_XL'
+  local model_name='demo/gemma-4-26B-A4B-it-qat-GGUF'
+  local expected_cache_dir="${HOME}/.cache/huggingface/hub/models--demo--gemma-4-26B-A4B-it-qat-GGUF"
+
+  write_mock_uname "${TEST_DIR}/bin/uname" "Darwin" "arm64"
+  mkdir -p "$current_link" "$(dirname "$expected_cache_dir")"
+  : >"$args_log"
+
+  cat >"${CORRAL_TEST_FIXTURES_DIR}/hf-model-demo--gemma-4-26B-A4B-it-qat-GGUF.json" <<'EOF'
+{
+  "id": "demo/gemma-4-26B-A4B-it-qat-GGUF",
+  "tags": ["gguf"],
+  "siblings": [
+    {"rfilename": "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf"},
+    {"rfilename": "mtp-gemma-4-26B-A4B-it-qat.gguf"}
+  ]
+}
+EOF
+
+  cat >"${current_link}/llama-cli" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$*" >"$CORRAL_LLAMA_CLI_ARGS_LOG"
+mkdir -p "$CORRAL_EXPECTED_CACHE_DIR/snapshots/def456"
+: >"$CORRAL_EXPECTED_CACHE_DIR/snapshots/def456/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf"
+if [[ "$*" == *"--spec-type draft-mtp"* ]]; then
+  : >"$CORRAL_EXPECTED_CACHE_DIR/snapshots/def456/mtp-gemma-4-26B-A4B-it-qat.gguf"
+fi
+exit 0
+EOF
+  chmod +x "${current_link}/llama-cli"
+
+  export CORRAL_INSTALL_ROOT="$install_root"
+  export CORRAL_EXPECTED_CACHE_DIR="$expected_cache_dir"
+  export CORRAL_LLAMA_CLI_ARGS_LOG="$args_log"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" pull "$model_spec"
+
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'pull prefetches mtp sidecar' "pull failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local args_out
+  args_out="$(cat "$args_log")"
+  if ! assert_contains "$args_out" '--spec-type draft-mtp' || \
+     ! assert_contains "$args_out" '--spec-draft-n-max 1'; then
+    fail 'pull prefetches mtp sidecar' "expected draft-mtp args, got: $args_out"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --models
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'pull prefetches mtp sidecar' "list failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local list_out
+  list_out="$(cat "$stdout_file")"
+  if ! assert_contains "$list_out" "${model_name}:UD-Q4_K_XL" || \
+     assert_contains "$list_out" 'ATTRIBUTES' || \
+     assert_contains "$list_out" ':mtp-gemma-4-26B-A4B-it-qat'; then
+    fail 'pull prefetches mtp sidecar' "expected model row without MTP sidecar row, got: $list_out"
+    return
+  fi
+
+  pass 'pull prefetches mtp sidecar'
+}
+
 test_pull_model_before_backend_flag() {
   local install_root="${HOME}/install-root"
   local current_link="${install_root}/current"
@@ -3106,7 +3182,7 @@ test_list_includes_templates_section() {
     fail 'list includes templates section' "expected user template row, got: $out"
     return
   fi
-  if ! assert_contains "$out" 'general' || ! assert_contains "$out" 'qwen-3-general' || ! assert_contains "$out" 'unsloth/Qwen3.6-35B-A3B-GGUF'; then
+  if ! assert_contains "$out" 'general' || ! assert_contains "$out" 'qwen-3-general' || ! assert_contains "$out" 'unsloth/Qwen3.6-35B-A3B-MTP-GGUF:UD-Q4_K_XL'; then
     fail 'list includes templates section' "expected built-in templates in list output, got: $out"
     return
   fi
@@ -3404,6 +3480,31 @@ test_list_ignores_mmproj_sidecar_quants() {
   fi
 
   pass 'list ignores mmproj sidecar quants'
+}
+
+test_list_ignores_mtp_sidecar_quants() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  create_gguf_fixture "models--demo--mtp-GGUF" "model-Q4_K_M.gguf" 2048
+  create_gguf_fixture "models--demo--mtp-GGUF" "mtp-model.gguf" 1024
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" list --models
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'list ignores mtp sidecar quants' "list --models failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  local out
+  out="$(cat "$stdout_file")"
+  if ! assert_contains "$out" 'demo/mtp-GGUF:Q4_K_M' || \
+     assert_contains "$out" 'ATTRIBUTES' || \
+     assert_contains "$out" 'demo/mtp-GGUF:mtp-model'; then
+    fail 'list ignores mtp sidecar quants' "unexpected list output, got: $out"
+    return
+  fi
+
+  pass 'list ignores mtp sidecar quants'
 }
 
 test_remove_quant_is_case_insensitive() {
@@ -4754,7 +4855,7 @@ test_profile_set_builtin_uses_default_model() {
 
   local content
   content="$(cat "$stdout_file")"
-  if ! assert_contains "$content" 'model=unsloth/Qwen3.6-35B-A3B-GGUF'; then
+  if ! assert_contains "$content" 'model=unsloth/Qwen3.6-35B-A3B-MTP-GGUF:UD-Q4_K_XL'; then
     fail 'profile set builtin uses default model' "expected default model from built-in template, got: $content"
     return
   fi
@@ -5674,6 +5775,9 @@ main() {
     test_pull_uses_hf_metadata_to_detect_gguf_backend
 
     setup_test_env
+    test_pull_prefetches_mtp_sidecar_and_hides_sidecar_row
+
+    setup_test_env
     test_pull_model_before_backend_flag
 
     setup_test_env
@@ -5810,6 +5914,9 @@ main() {
 
     setup_test_env
     test_list_colors_model_size_when_tty
+
+    setup_test_env
+    test_list_ignores_mtp_sidecar_quants
 
     setup_test_env
     test_list_quiet_includes_quant

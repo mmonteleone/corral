@@ -225,6 +225,21 @@ model=unsloth/gemma-4-26B-A4B-it-GGUF
 
 `profile` creates flat profiles. Section headers are added by editing the file directly or inherited from templates. Templates use the same format (`model=` optional) and live in `~/.config/corral/templates/`. A user-defined template with the same name as a built-in takes precedence.
 
+### Multi-Token Prediction (MTP)
+
+For certain models that support Multi-Token Prediction (MTP) drafting sidecars, Corral manages the required sidecar files automatically.
+
+- When you `pull` or `run` a model requiring an MTP sidecar, Corral downloads it automatically.
+- MTP sidecars are excluded from `corral list` to keep your view focused on primary models.
+
+_Ensure you uncomment the profile's use of MTP:_
+
+```
+## Uncomment for MTP drafting
+# --spec-type draft-mtp
+# --spec-draft-n-max 3
+```
+
 ## Launch coding harnesses
 
 `corral launch` configures a supported coding harness to use a currently running `corral serve` instance, then launches the harness.
