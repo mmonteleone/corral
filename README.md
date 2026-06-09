@@ -6,7 +6,7 @@ Run local models with the ease of [Ollama](https://ollama.com) and full power of
 
 ```sh
 corral search gemma
-corral run unsloth/gemma-4-26B-A4B-it-GGUF
+corral run unsloth/gemma-4-26B-A4B-it-qat-GGUF
 corral launch pi
 ```
 ![screenshot of corral's search command](./images/corral-search.png)
@@ -50,14 +50,14 @@ On Apple Silicon this installs **both** llama.cpp (`llama-cli`, `llama-server`) 
 
 ```sh
 corral search gemma                           # Find models on Hugging Face
-corral run unsloth/gemma-4-26B-A4B-it-GGUF    # Chat (downloads on first use)
-corral run mlx-community/gemma-4-26b-a4b-it-6bit  # MLX model (auto-detected)
-corral serve unsloth/gemma-4-26B-A4B-it-GGUF  # OpenAI-compatible API + web UI
+corral run unsloth/gemma-4-26B-A4B-it-qat-GGUF    # Chat (downloads on first use)
+corral run mlx-community/gemma-4-26b-a4b-it-4bit  # MLX model (auto-detected)
+corral serve unsloth/gemma-4-26B-A4B-it-qat-GGUF  # OpenAI-compatible API + web UI
 
-corral run unsloth/gemma-4-26B-A4B-it-GGUF -- --gpu-layers all -c 8192  # Extra flags
+corral run unsloth/gemma-4-26B-A4B-it-qat-GGUF -- --gpu-layers all -c 8192  # Extra flags
 
 # Profiles: save a name + model + flags combo
-corral profile coder unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_XL -- \
+corral profile coder unsloth/gemma-4-26B-A4B-it-qat-GGUF:UD-Q4_K_XL -- \
   --ctx-size 65536 --temp 0.5 --gpu-layers all
 corral serve coder
 
@@ -73,7 +73,7 @@ corral launch codex
 # List models, installed engines, profiles, templates
 corral list
 
-corral remove unsloth/gemma-4-26B-A4B-it-GGUF
+corral remove unsloth/gemma-4-26B-A4B-it-qat-GGUF
 corral remove coder
 ```
 
@@ -113,7 +113,7 @@ corral run unsloth/gemma-4-26B-A4B-it-GGUF            # default quant
 corral run unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q6_K    # specific quant
 ```
 
-MLX models use plain IDs without `:QUANT` (e.g. `mlx-community/gemma-4-26b-a4b-it-6bit`).
+MLX models use plain IDs without `:QUANT` (e.g. `mlx-community/gemma-4-26b-a4b-it-4bit`).
 
 All models are stored in the standard Hugging Face cache (`~/.cache/huggingface/hub/`).
 
@@ -143,7 +143,7 @@ corral remove work-chat         # remove a user template
 A **profile** saves a model + flags under a name, usable anywhere a model is accepted:
 
 ```sh
-corral profile coder unsloth/gemma-4-26B-A4B-it-GGUF -- \
+corral profile coder unsloth/gemma-4-26B-A4B-it-qat-GGUF -- \
   --ctx-size 65536 --temp 0.5 --gpu-layers all
 
 corral run coder
@@ -181,7 +181,7 @@ corral profile test-chat work-chat user/new-llm:Q4_K  # override model
 ```sh
 corral show coder                            # Show profile details
 corral show --template chat                  # Show template details
-corral show unsloth/gemma-4-26B-A4B-it-GGUF  # Show model details
+corral show unsloth/gemma-4-26B-A4B-it-qat-GGUF  # Show model details
 corral copy coder coder2
 corral cp coder coder3                       # alias
 corral copy chat chat-copy                   # copy built-in template
@@ -194,7 +194,7 @@ corral remove work-chat                      # delete user template
 Profiles are plain text in `~/.config/corral/profiles/` with a `model=` line and flags (one per line). Section headers scope flags to a backend, command, or both:
 
 ```
-model=unsloth/gemma-4-26B-A4B-it-GGUF
+model=unsloth/gemma-4-26B-A4B-it-qat-GGUF
 --temp 0.2
 
 [mlx]
