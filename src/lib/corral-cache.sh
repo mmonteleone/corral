@@ -12,7 +12,7 @@
 #   - Cache dir conversion: model_name_to_cache_dir() ↔ cache_dir_to_model_name()
 #   - Entry collection: collect_cached_model_entries() (GGUF), collect_mlx_model_entries()
 #   - Private cache helpers: _cached_quant_tags(), _find_cached_gguf_paths(),
-#     _is_auxiliary_gguf_filename()
+#     _is_auxiliary_gguf_filename(), _is_mtp_sidecar_gguf_filename()
 #
 # Entry format: pipe-delimited "name|quant|size|backend" rows consumed by inventory commands.
 # shellcheck shell=bash
@@ -268,7 +268,7 @@ cache_has_model_or_quant() {
 }
 
 # Emit one line per installed quant variant in pipe-delimited format:
-#   {model_name}|{quant_tag}|{disk_size}
+#   {model_name}|{quant_tag}|{disk_size}|{backend}
 # This is the canonical data format consumed by cmd_list and cmd_remove.
 collect_cached_model_entries() {
   local dir
@@ -313,6 +313,7 @@ collect_cached_model_entries() {
 # Find cached model GGUF file paths in a model's HF cache snapshots directory.
 # HuggingFace hub stores downloaded files under snapshots/<revision-hash>/.
 # A model may have multiple snapshot revisions, so we glob all of them.
+# Auxiliary sidecars such as mmproj and mtp drafts are excluded here.
 # Prints one full path per line, deduplicated and sorted.
 _find_cached_gguf_paths() {
   local cache_dir="$1"
@@ -333,13 +334,35 @@ _find_cached_gguf_paths() {
 
 # Return success for GGUF sidecar files that should not be treated as model
 # quant variants. llama.cpp may automatically fetch mmproj projectors for
-# multimodal models; listing them as BF16/F16/F32 model quants is misleading.
+# multimodal models and MTP drafter sidecars; listing them as model quants is
+# misleading.
 _is_auxiliary_gguf_filename() {
   local filename="$1"
   local stem="${filename%.gguf}"
   local lower
   lower="$(printf '%s' "$stem" | tr '[:upper:]' '[:lower:]')"
-  [[ "$lower" =~ (^|[-._])mmproj($|[-._]) ]]
+  if [[ "$lower" =~ (^|[-._])mmproj($|[-._]) ]]; then
+    return 0
+  fi
+
+  # MTP sidecars are published as mtp-*.gguf drafts. Keep this narrow so we
+  # don't hide a real primary model that merely happens to contain "mtp" in
+  # the middle of its quantized filename.
+  if _is_mtp_sidecar_gguf_filename "$filename"; then
+    return 0
+  fi
+
+  return 1
+}
+
+# Return success for MTP draft sidecars published as mtp-*.gguf.
+_is_mtp_sidecar_gguf_filename() {
+  local filename="$1"
+  local stem="${filename%.gguf}"
+  local lower
+  lower="$(printf '%s' "$stem" | tr '[:upper:]' '[:lower:]')"
+
+  [[ "$lower" == mtp-* ]] && [[ "$(extract_quant_from_filename "$filename")" == "$stem" ]]
 }
 
 # List the distinct quant tags present in a model's cache directory.

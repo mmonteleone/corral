@@ -1208,13 +1208,25 @@ _cmd_pull() {
   local quant="$REPLY_QUANT"
   local cache_dir
   cache_dir="$(model_name_to_cache_dir "$model_name")"
+
+  local pull_extra_args=()
+  local requires_mtp_sidecar="false"
+  if [[ "$BACKEND" == "llama.cpp" ]] && _hf_model_has_mtp_sidecar "$model_name"; then
+    pull_extra_args=(--spec-type draft-mtp --spec-draft-n-max 1)
+    requires_mtp_sidecar="true"
+  fi
+
   ensure_llama_in_path
   require_cmds llama-cli
 
   if cache_has_model_or_quant "$cache_dir" "$quant"; then
-    echo "Model already cached: $model_spec"
-    echo "  $cache_dir"
-    return 0
+    if [[ "$requires_mtp_sidecar" == "true" ]] && ! _cache_dir_has_mtp_sidecar "$cache_dir"; then
+      :
+    else
+      echo "Model already cached: $model_spec"
+      echo "  $cache_dir"
+      return 0
+    fi
   fi
 
   local preexisting_gguf_paths=''
@@ -1239,11 +1251,16 @@ _cmd_pull() {
   # set -e abort the script on non-zero. We check pull_status below to
   # provide a more helpful error message.
   local pull_status=0
-  llama-cli -hf "$model_spec" "${hf_args[@]+"${hf_args[@]}"}" --no-conversation --single-turn --prompt ' ' --no-display-prompt -n 0 </dev/null || pull_status=$?
+  llama-cli -hf "$model_spec" "${hf_args[@]+"${hf_args[@]}"}" \
+    "${pull_extra_args[@]+"${pull_extra_args[@]}"}" \
+    --no-conversation --single-turn --prompt ' ' --no-display-prompt -n 0 </dev/null || pull_status=$?
 
   if cache_has_model_or_quant "$cache_dir" "$quant"; then
     if [[ -n "$quant" ]]; then
       _cleanup_unrequested_quant_pull_ggufs "$cache_dir" "$quant" "$preexisting_gguf_paths"
+    fi
+    if [[ "$requires_mtp_sidecar" == "true" ]] && ! _cache_dir_has_mtp_sidecar "$cache_dir"; then
+      die "pull did not download required MTP sidecar for '${model_spec}' (cache dir: ${cache_dir})"
     fi
     echo "Done: $model_spec"
     return 0
@@ -1260,6 +1277,63 @@ _cmd_pull() {
   die "pull did not cache requested quant '${quant}' for model '${model_name}' (cache dir: ${cache_dir})"
 }
 
+# Return success if the cache already includes an auxiliary MTP sidecar.
+_cache_dir_has_mtp_sidecar() {
+  local cache_dir="$1"
+  local snapshot_dir
+  local path
+
+  for snapshot_dir in "$cache_dir"/snapshots/*/; do
+    [[ -d "$snapshot_dir" ]] || continue
+    while IFS= read -r path; do
+      [[ -z "$path" ]] && continue
+      if _is_mtp_sidecar_gguf_filename "$(basename "$path")"; then
+        return 0
+      fi
+    done < <(find "$snapshot_dir" \( -type f -o -type l \) -name '*.gguf' -print)
+  done
+
+  return 1
+}
+
+# Fetch Hugging Face model metadata as JSON. Returns 0 on success.
+_fetch_hf_model_metadata() {
+  local model_name="$1"
+  [[ "$model_name" == */* ]] || return 1
+  command -v curl >/dev/null 2>&1 || return 1
+
+  local hf_token="${HF_TOKEN:-${HF_HUB_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-}}}"
+  local auth_header=()
+  [[ -n "$hf_token" ]] && auth_header=(-H "Authorization: Bearer ${hf_token}")
+
+  curl -fsSL \
+    --connect-timeout 15 \
+    --max-time 30 \
+    --retry 3 \
+    --retry-delay 2 \
+    "${auth_header[@]+"${auth_header[@]}"}" \
+    "https://huggingface.co/api/models/${model_name}" 2>/dev/null
+}
+
+# Return success if the Hugging Face metadata for a model advertises an MTP
+# draft sidecar. This is used to decide whether pull should prewarm draft args.
+_hf_model_has_mtp_sidecar() {
+  local model_name="$1"
+  [[ "$model_name" == */* ]] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+
+  local metadata
+  metadata="$(_fetch_hf_model_metadata "$model_name" || return 1)"
+
+  jq -e '
+    any((.siblings // [])[]?; (
+      (.rfilename // "" | ascii_downcase) as $name
+      | ($name | startswith("mtp-") or contains("/mtp-") or contains("draft-mtp"))
+      and ($name | endswith(".gguf"))
+    ))
+  ' >/dev/null 2>&1 <<<"$metadata"
+}
+
 # Infer a backend hint from Hugging Face model metadata.
 # Prints "llama.cpp", "mlx", or nothing when the metadata is unavailable or
 # inconclusive. This keeps pull fast for obvious cases while avoiding a wrong
@@ -1267,23 +1341,10 @@ _cmd_pull() {
 _infer_pull_backend_from_hf_metadata() {
   local model_name="$1"
   [[ "$model_name" == */* ]] || return 1
-  command -v curl >/dev/null 2>&1 || return 1
   command -v jq >/dev/null 2>&1 || return 1
 
-  local hf_token="${HF_TOKEN:-${HF_HUB_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-}}}"
-  local auth_header=()
-  [[ -n "$hf_token" ]] && auth_header=(-H "Authorization: Bearer ${hf_token}")
-
   local metadata
-  metadata="$({
-    curl -fsSL \
-      --connect-timeout 15 \
-      --max-time 30 \
-      --retry 3 \
-      --retry-delay 2 \
-      "${auth_header[@]+"${auth_header[@]}"}" \
-      "https://huggingface.co/api/models/${model_name}"
-  } 2>/dev/null)" || return 1
+  metadata="$(_fetch_hf_model_metadata "$model_name" || return 1)"
 
   if jq -e '
       (((.tags // []) | map(ascii_downcase) | index("gguf")) != null) or
@@ -1350,6 +1411,10 @@ _cleanup_unrequested_quant_pull_ggufs() {
 
   while IFS= read -r current_path; do
     [[ -z "$current_path" ]] && continue
+
+    if _is_auxiliary_gguf_filename "$(basename "$current_path")"; then
+      continue
+    fi
 
     if [[ -n "$preexisting_paths" ]] && grep -Fqx "$current_path" <<<"$preexisting_paths"; then
       continue
