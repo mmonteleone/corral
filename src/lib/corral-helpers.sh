@@ -206,8 +206,8 @@ ensure_llama_in_path() {
   fi
 }
 
-# Return "mlx" or "llama.cpp" as the platform-based default backend.
-# macOS arm64 (Apple Silicon) defaults to mlx; all other platforms default to llama.cpp.
+# Return "llama.cpp" as the default backend.
+# Corral prefers llama.cpp unless a command explicitly selects MLX.
 # shellcheck disable=SC2329
 platform_default_backend() {
   if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
@@ -218,7 +218,7 @@ platform_default_backend() {
 }
 
 # Resolve the effective backend for a command.
-# Precedence: explicit --backend flag value > platform default.
+# Precedence: explicit --backend flag value > default backend.
 # Prints "mlx" or "llama.cpp".
 # shellcheck disable=SC2329
 resolve_backend() {

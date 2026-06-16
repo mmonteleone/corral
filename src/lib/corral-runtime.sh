@@ -1371,11 +1371,10 @@ _infer_pull_backend_from_hf_metadata() {
 #      MLX backends never use colon-separated quant tags; a ":quant" suffix
 #      is an unambiguous GGUF signal regardless of repo naming.
 #   2. Repo name ends in -GGUF (case-insensitive) → llama.cpp.
-#   3. Remote HF metadata says GGUF or MLX → use that backend.
-#   4. Otherwise → platform default (mlx on macOS arm64, llama.cpp elsewhere).
-# Note: this differs from _infer_model_backend, which assumes 'mlx' for any
-# USER/MODEL spec without GGUF evidence. Pull can cheaply query HF metadata,
-# which avoids misrouting GGUF repos whose names omit the -GGUF suffix.
+#   3. Remote HF metadata says GGUF → llama.cpp.
+#   4. Otherwise -> default backend (llama.cpp everywhere).
+# Note: this still queries HF metadata first so obvious GGUF repos can be
+# routed explicitly before falling back to the llama.cpp default.
 _infer_pull_backend() {
   local model_spec="$1"
   local model_name="${model_spec%%:*}"

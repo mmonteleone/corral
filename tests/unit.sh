@@ -1190,6 +1190,45 @@ test_parse_search_args_rejects_extra_positional() {
   fi
 }
 
+test_cmd_search_defaults_to_llama_backend() {
+  local mock_bin="${TEST_ROOT}/mock-search-default"
+  mkdir -p "$mock_bin"
+
+  cat >"${mock_bin}/curl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${CURL_LOG}"
+printf '%s' '[{"modelId":"demo/gemma-GGUF","downloads":123}]'
+EOF
+  chmod +x "${mock_bin}/curl"
+
+  local stdout_file="${TEST_ROOT}/stdout.search.default"
+  local stderr_file="${TEST_ROOT}/stderr.search.default"
+  local curl_log="${TEST_ROOT}/curl.search.default.log"
+  : >"$curl_log"
+
+  set +e
+  CURL_LOG="$curl_log" PATH="${mock_bin}:$PATH" cmd_search gemma >"$stdout_file" 2>"$stderr_file"
+  local status=$?
+  set -e
+
+  local out err
+  out="$(cat "$stdout_file")"
+  err="$(cat "$stderr_file")"
+
+  if [[ $status -ne 0 ]]; then
+    fail 'cmd_search defaults to llama backend' "search failed: $err"
+    return
+  fi
+
+  if assert_contains "$out" 'llama.cpp' && \
+     assert_contains "$(cat "$curl_log")" 'filter=gguf' && \
+     ! assert_contains "$(cat "$curl_log")" 'filter=mlx'; then
+    pass 'cmd_search defaults to llama backend'
+  else
+    fail 'cmd_search defaults to llama backend' "unexpected output='$out' curl='$(cat "$curl_log")'"
+  fi
+}
+
 test_parse_list_args_tracks_scope_flags() {
   if ! _parse_list_args --backend mlx --quiet --models --templates; then
     fail 'parse_list_args handles backend quiet and scope flags' "unexpected parse error: ${REPLY_LIST_ERROR}"
@@ -1983,6 +2022,7 @@ else
   test_search_quants_jq_defs_extract_quants_and_default
   test_parse_search_args_with_query_and_flags
   test_parse_search_args_rejects_extra_positional
+  test_cmd_search_defaults_to_llama_backend
   test_parse_list_args_tracks_scope_flags
   test_cmd_list_sorts_models_alphabetically
   test_cmd_list_sorts_profiles_alphabetically
