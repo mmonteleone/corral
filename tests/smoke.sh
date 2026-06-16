@@ -4104,42 +4104,39 @@ test_search_default_quant_tabular() {
   pass 'search --quants tabular marks default quant'
 }
 
-test_search_default_backend_quants_warns_on_apple_silicon() {
+test_search_default_backend_quants_use_llama() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
 
-  write_mock_uname "${TEST_DIR}/bin/uname" "Darwin" "arm64"
+  write_hf_search_fixture "$CORRAL_TEST_FIXTURES_DIR"
 
-  write_hf_search_fixture_mlx "$CORRAL_TEST_FIXTURES_DIR"
-
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search qwen --quants
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma --quants
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'search default backend warns for quants on Apple Silicon' "search failed: $(cat "$stderr_file")"
+    fail 'search default backend uses llama quant results' "search failed: $(cat "$stderr_file")"
     return
   fi
 
-  if ! assert_contains "$(cat "$stderr_file")" '--quants is only supported for llama.cpp/GGUF search'; then
-    fail 'search default backend warns for quants on Apple Silicon' "expected MLX quant warning, got: $(cat "$stderr_file")"
+  if [[ -s "$stderr_file" ]]; then
+    fail 'search default backend uses llama quant results' "expected no warning, got: $(cat "$stderr_file")"
     return
   fi
 
   if ! assert_contains "$(cat "$stdout_file")" 'BACKEND'; then
-    fail 'search default backend warns for quants on Apple Silicon' "expected BACKEND header, got: $(cat "$stdout_file")"
+    fail 'search default backend uses llama quant results' "expected BACKEND header, got: $(cat "$stdout_file")"
     return
   fi
 
-  if ! assert_contains "$(cat "$stdout_file")" 'mlx'; then
-    fail 'search default backend warns for quants on Apple Silicon' "expected backend value 'mlx' in output, got: $(cat "$stdout_file")"
+  if ! assert_contains "$(cat "$stdout_file")" 'llama.cpp'; then
+    fail 'search default backend uses llama quant results' "expected backend value 'llama.cpp' in output, got: $(cat "$stdout_file")"
     return
   fi
 
-  if assert_contains "$(cat "$stdout_file")" '  mlx-community/Qwen2.5-7B-Instruct-4bit:' || \
-     assert_contains "$(cat "$stdout_file")" '  org/qwen-mlx-tagged-model:'; then
-    fail 'search default backend warns for quants on Apple Silicon' "did not expect quant child rows in output: $(cat "$stdout_file")"
+  if ! assert_contains "$(cat "$stdout_file")" '  demo/gemma-GGUF:Q4_K_M'; then
+    fail 'search default backend uses llama quant results' "expected quant child rows in output: $(cat "$stdout_file")"
     return
   fi
 
-  pass 'search default backend warns for quants on Apple Silicon'
+  pass 'search default backend uses llama quant results'
 }
 
 test_browse_opens_url() {
@@ -5657,17 +5654,15 @@ test_combined_versions_flow() {
   pass 'combined versions shows mlx section'
 }
 
-test_search_defaults_to_platform_backend_on_apple_silicon() {
+test_search_defaults_to_llama_backend() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
 
-  write_mock_uname "${TEST_DIR}/bin/uname" "Darwin" "arm64"
+  write_hf_search_fixture "$CORRAL_TEST_FIXTURES_DIR"
 
-  write_hf_search_fixture_mlx "$CORRAL_TEST_FIXTURES_DIR"
-
-  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search qwen
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" search gemma
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'search defaults to platform backend on Apple Silicon' "search failed: $(cat "$stderr_file")"
+    fail 'search defaults to llama backend' "search failed: $(cat "$stderr_file")"
     return
   fi
 
@@ -5675,48 +5670,48 @@ test_search_defaults_to_platform_backend_on_apple_silicon() {
   out="$(cat "$stdout_file")"
 
   if ! assert_contains "$out" 'MODEL'; then
-    fail 'search defaults to platform backend on Apple Silicon' "expected MODEL column header, got: $out"
+    fail 'search defaults to llama backend' "expected MODEL column header, got: $out"
     return
   fi
 
   if ! assert_contains "$out" 'BACKEND'; then
-    fail 'search defaults to platform backend on Apple Silicon' "expected BACKEND column header, got: $out"
+    fail 'search defaults to llama backend' "expected BACKEND column header, got: $out"
     return
   fi
 
-  if ! assert_contains "$out" 'mlx-community/Qwen2.5-7B-Instruct-4bit'; then
-    fail 'search defaults to platform backend on Apple Silicon' "expected default MLX result in output, got: $out"
+  if ! assert_contains "$out" 'demo/gemma-GGUF'; then
+    fail 'search defaults to llama backend' "expected default GGUF result in output, got: $out"
     return
   fi
 
-  if ! assert_contains "$out" 'org/qwen-mlx-tagged-model'; then
-    fail 'search defaults to platform backend on Apple Silicon' "expected second MLX result in output, got: $out"
+  if ! assert_contains "$out" 'demo/gemma-small-GGUF'; then
+    fail 'search defaults to llama backend' "expected second GGUF result in output, got: $out"
     return
   fi
 
-  if ! assert_contains "$out" 'mlx'; then
-    fail 'search defaults to platform backend on Apple Silicon' "expected backend value 'mlx' in output, got: $out"
+  if ! assert_contains "$out" 'llama.cpp'; then
+    fail 'search defaults to llama backend' "expected backend value 'llama.cpp' in output, got: $out"
     return
   fi
 
-  if assert_contains "$out" 'org/gguf-only-model' || assert_contains "$out" 'org/transformers-model'; then
-    fail 'search defaults to platform backend on Apple Silicon' "did not expect non-MLX results in output, got: $out"
+  if assert_contains "$out" 'demo/not-gguf-transformers'; then
+    fail 'search defaults to llama backend' "did not expect non-GGUF results in output, got: $out"
     return
   fi
 
   local curl_log
   curl_log="$(cat "${CORRAL_TEST_LOG_DIR}/curl.log")"
-  if ! assert_contains "$curl_log" 'filter=mlx'; then
-    fail 'search defaults to platform backend on Apple Silicon' "expected filter=mlx in request URL, got: $curl_log"
+  if ! assert_contains "$curl_log" 'filter=gguf'; then
+    fail 'search defaults to llama backend' "expected filter=gguf in request URL, got: $curl_log"
     return
   fi
 
-  if assert_contains "$curl_log" 'filter=gguf'; then
-    fail 'search defaults to platform backend on Apple Silicon' "did not expect filter=gguf in request URL, got: $curl_log"
+  if assert_contains "$curl_log" 'filter=mlx'; then
+    fail 'search defaults to llama backend' "did not expect filter=mlx in request URL, got: $curl_log"
     return
   fi
 
-  pass 'search defaults to platform backend on Apple Silicon'
+  pass 'search defaults to llama backend'
 }
 
 run_selected_tests() {
@@ -5997,7 +5992,7 @@ main() {
     test_search_default_quant_tabular
 
     setup_test_env
-    test_search_default_backend_quants_warns_on_apple_silicon
+    test_search_default_backend_quants_use_llama
 
     setup_test_env
     test_search_mlx_backend_filters_results
@@ -6114,7 +6109,7 @@ main() {
     test_combined_versions_flow
 
     setup_test_env
-    test_search_defaults_to_platform_backend_on_apple_silicon
+    test_search_defaults_to_llama_backend
   fi
 
   printf '\n'

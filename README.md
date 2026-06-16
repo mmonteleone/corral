@@ -119,6 +119,8 @@ All models are stored in the standard Hugging Face cache (`~/.cache/huggingface/
 
 ### Search
 
+`corral search` defaults to `llama.cpp`/GGUF results. Pass `--backend mlx` when you want MLX-tagged models instead.
+
 ```sh
 corral search --backend llama.cpp gemma            # GGUF-tagged results
 corral search --backend mlx gemma                  # MLX-tagged results
