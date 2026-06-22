@@ -1909,7 +1909,7 @@ test_toml_string_literal_escapes_values() {
   fi
 }
 
-test_write_codex_model_catalog_uses_function_tools_metadata() {
+test_write_codex_model_catalog_uses_freeform_tools_metadata() {
   local catalog shell_type apply_patch_tool search_enabled context_window
 
   _write_codex_model_catalog 'unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL' 32768
@@ -1921,12 +1921,12 @@ test_write_codex_model_catalog_uses_function_tools_metadata() {
   context_window="$(jq -r '.models[0].context_window' "$catalog")"
 
   if assert_eq "$shell_type" 'local' && \
-     assert_eq "$apply_patch_tool" 'function' && \
+     assert_eq "$apply_patch_tool" 'freeform' && \
      assert_eq "$search_enabled" 'false' && \
      assert_eq "$context_window" '32768'; then
-    pass 'write codex model catalog uses llama-compatible metadata'
+    pass 'write codex model catalog uses codex-compatible metadata'
   else
-    fail 'write codex model catalog uses llama-compatible metadata' "unexpected catalog: $(cat "$catalog")"
+    fail 'write codex model catalog uses codex-compatible metadata' "unexpected catalog: $(cat "$catalog")"
   fi
 }
 
@@ -2052,7 +2052,7 @@ else
   test_render_merged_json_file_migrates_pi_models_schema
   test_launch_tool_supports_process_matrix
   test_toml_string_literal_escapes_values
-  test_write_codex_model_catalog_uses_function_tools_metadata
+  test_write_codex_model_catalog_uses_freeform_tools_metadata
   test_completions_fish_generation
   test_completions_fish_profile_set_positionals
   test_completions_include_copy_and_template_removal_targets
