@@ -26,7 +26,7 @@ corral launch pi
 
 Not really.
 
-## Install
+## Install (or Upgrade)
 
 ```sh
 curl -fsSL https://github.com/mmonteleone/corral/releases/latest/download/corral \
