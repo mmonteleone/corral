@@ -4,7 +4,7 @@
 # configures the harness to point at that server's OpenAI-compatible /v1
 # endpoint, backs up file-backed config when it changes, and execs the harness.
 #
-# Supported harnesses: pi, opencode, codex
+# Supported harnesses: pi, opencode, codex, copilot
 #
 # JSON/JSONC handling:
 #   _strip_jsonc()            — awk program that strips // and /* */ comments
@@ -23,10 +23,10 @@ CORRAL_LAUNCH_PROVIDER_ID="corral-launch"
 
 cmd_launch_usage() {
   cat <<EOF
-Usage: $SCRIPT_NAME launch [--port <port>] <pi|opencode|codex> [-- <extra args...>]
+Usage: $SCRIPT_NAME launch [--port <port>] <pi|opencode|codex|copilot> [-- <extra args...>]
 
 Arguments:
-  pi|opencode|codex  Supported coding harness to configure and launch.
+  pi|opencode|codex|copilot  Supported coding harness to configure and launch.
 
 Options:
   --port <port>      Use a specific running corral server when multiple are active.
@@ -38,12 +38,13 @@ they change.
 
 Notes:
   - pi and opencode work with llama-server and mlx_lm.server.
-  - codex requires a llama-server with /v1/responses support.
+  - codex and copilot require llama-server.
 
 Examples:
   $SCRIPT_NAME launch pi
   $SCRIPT_NAME launch --port 8082 opencode
   $SCRIPT_NAME launch --port 9000 codex
+  $SCRIPT_NAME launch --port 9000 copilot
 EOF
 }
 
@@ -94,6 +95,8 @@ cmd_launch() {
       require_cmds jq
       _configure_opencode_launch "$REPLY_LAUNCH_ENDPOINT" "$REPLY_LAUNCH_MODEL" "$CORRAL_LAUNCH_PROVIDER_ID" "$REPLY_LAUNCH_CONTEXT_WINDOW" "$REPLY_LAUNCH_MAX_TOKENS"
       ;;
+    copilot)
+      ;;
     codex)
       ;;
   esac
@@ -107,6 +110,16 @@ cmd_launch() {
       ;;
     opencode)
       exec opencode "${extra_args[@]+"${extra_args[@]}"}"
+      ;;
+    copilot)
+      export COPILOT_PROVIDER_BASE_URL="$REPLY_LAUNCH_ENDPOINT"
+      export COPILOT_MODEL="$REPLY_LAUNCH_MODEL"
+      export COPILOT_OFFLINE="true"
+      if [[ "$REPLY_LAUNCH_CONTEXT_WINDOW" =~ ^[1-9][0-9]*$ ]]; then
+        export COPILOT_PROVIDER_MAX_PROMPT_TOKENS="$((REPLY_LAUNCH_CONTEXT_WINDOW * 75 / 100))"
+        export COPILOT_PROVIDER_MAX_OUTPUT_TOKENS="$((REPLY_LAUNCH_CONTEXT_WINDOW * 125 / 1000))"
+      fi
+      exec copilot "${extra_args[@]+"${extra_args[@]}"}"
       ;;
     codex)
       _write_codex_model_catalog "$REPLY_LAUNCH_MODEL" "$REPLY_LAUNCH_CONTEXT_WINDOW"
@@ -371,7 +384,7 @@ _launch_tool_supports_process() {
     pi|opencode)
       return 0
       ;;
-    codex)
+    codex|copilot)
       [[ "$process_name" == "llama-server" ]]
       return
       ;;
@@ -540,7 +553,7 @@ _parse_launch_args() {
 
 _validate_launch_tool() {
   case "$1" in
-    pi|opencode|codex) ;;
-    *) die "unsupported launch target '${1}'. Expected one of: pi, opencode, codex" ;;
+    pi|opencode|codex|copilot) ;;
+    *) die "unsupported launch target '${1}'. Expected one of: pi, opencode, codex, copilot" ;;
   esac
 }
