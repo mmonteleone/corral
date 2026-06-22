@@ -1887,7 +1887,9 @@ EOF
 test_launch_tool_supports_process_matrix() {
   if _launch_tool_supports_process pi mlx_lm.server && \
      _launch_tool_supports_process opencode llama-server && \
+     _launch_tool_supports_process copilot llama-server && \
      _launch_tool_supports_process codex llama-server && \
+     ! _launch_tool_supports_process copilot mlx_lm.server && \
      ! _launch_tool_supports_process codex mlx_lm.server && \
      ! _launch_tool_supports_process pi llama-cli; then
     pass 'launch tool support matrix'
@@ -1935,9 +1937,9 @@ test_completions_include_launch() {
   bash_out="$(completions_bash)"
 
   if assert_contains "$fish_out" 'launch' && \
-     assert_contains "$fish_out" 'pi opencode codex' && \
+     assert_contains "$fish_out" 'pi opencode codex copilot' && \
      assert_contains "$zsh_out" 'launch:Configure and launch a supported coding harness' && \
-     assert_contains "$bash_out" 'pi opencode codex'; then
+     assert_contains "$bash_out" 'pi opencode codex copilot'; then
     pass 'completions include launch'
   else
     fail 'completions include launch' 'expected launch command and tool completions in generated shells'

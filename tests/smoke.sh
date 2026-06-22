@@ -343,6 +343,13 @@ write_mock_exec_tool() {
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s|%s\n' "$(basename "$0")" "$*" >>"${CORRAL_TEST_LOG_DIR}/launch.log"
+if [[ "$(basename "$0")" == "copilot" ]]; then
+printf 'COPILOT_PROVIDER_BASE_URL=%s\n' "${COPILOT_PROVIDER_BASE_URL-}" >>"${CORRAL_TEST_LOG_DIR}/launch.log"
+printf 'COPILOT_MODEL=%s\n' "${COPILOT_MODEL-}" >>"${CORRAL_TEST_LOG_DIR}/launch.log"
+printf 'COPILOT_OFFLINE=%s\n' "${COPILOT_OFFLINE-}" >>"${CORRAL_TEST_LOG_DIR}/launch.log"
+printf 'COPILOT_PROVIDER_MAX_PROMPT_TOKENS=%s\n' "${COPILOT_PROVIDER_MAX_PROMPT_TOKENS-}" >>"${CORRAL_TEST_LOG_DIR}/launch.log"
+printf 'COPILOT_PROVIDER_MAX_OUTPUT_TOKENS=%s\n' "${COPILOT_PROVIDER_MAX_OUTPUT_TOKENS-}" >>"${CORRAL_TEST_LOG_DIR}/launch.log"
+fi
 EOF
   chmod +x "$path"
 }
@@ -1729,6 +1736,48 @@ EOF
     pass 'launch opencode updates jsonc and launches tool'
   else
     fail 'launch opencode updates jsonc and launches tool' "expected opencode launch to merge JSONC config and exec opencode; config=$(cat "$config_path" 2>/dev/null || echo missing), stdout=$(cat "$stdout_file" 2>/dev/null || echo empty), stderr=$(cat "$stderr_file" 2>/dev/null || echo empty), launch_log=$(cat "${CORRAL_TEST_LOG_DIR}/launch.log" 2>/dev/null || echo missing), XDG_CONFIG_HOME=${XDG_CONFIG_HOME-unset}"
+  fi
+}
+
+test_launch_copilot_sets_env_and_launches_tool() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  write_mock_ps "${TEST_DIR}/bin/ps"
+  write_mock_exec_tool "${TEST_DIR}/bin/copilot"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" launch --port 9000 copilot -- explain
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'launch copilot sets env and launches tool' "launch copilot failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  if assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" 'copilot|explain' && \
+     assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" 'COPILOT_PROVIDER_BASE_URL=http://127.0.0.1:9000/v1' && \
+     assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" 'COPILOT_MODEL=demo/server-model' && \
+     assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" 'COPILOT_OFFLINE=true' && \
+     assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" 'COPILOT_PROVIDER_MAX_PROMPT_TOKENS=98304' && \
+     assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" 'COPILOT_PROVIDER_MAX_OUTPUT_TOKENS=16384'; then
+    pass 'launch copilot sets env and launches tool'
+  else
+    fail 'launch copilot sets env and launches tool' "expected copilot launch to export COPILOT_* and exec copilot: stdout=$(cat "$stdout_file" 2>/dev/null || echo empty), stderr=$(cat "$stderr_file" 2>/dev/null || echo empty), launch_log=$(cat "${CORRAL_TEST_LOG_DIR}/launch.log" 2>/dev/null || echo missing)"
+  fi
+}
+
+test_launch_copilot_rejects_mlx_server() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  write_mock_ps "${TEST_DIR}/bin/ps"
+  write_mock_exec_tool "${TEST_DIR}/bin/copilot"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" launch --port 8082 copilot
+
+  if [[ $RUN_STATUS -ne 0 ]] && \
+     assert_contains "$(cat "$stderr_file")" 'no compatible corral server found'; then
+    pass 'launch copilot rejects mlx server'
+  else
+    fail 'launch copilot rejects mlx server' "expected copilot launch to reject mlx_lm.server: $(cat "$stderr_file")"
   fi
 }
 
@@ -5807,6 +5856,12 @@ main() {
 
     setup_test_env
     test_launch_opencode_updates_jsonc_and_launches_tool
+
+    setup_test_env
+    test_launch_copilot_sets_env_and_launches_tool
+
+    setup_test_env
+    test_launch_copilot_rejects_mlx_server
 
     setup_test_env
     test_launch_codex_uses_llama_responses_provider
