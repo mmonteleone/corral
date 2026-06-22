@@ -4,7 +4,7 @@
 # configures the harness to point at that server's OpenAI-compatible /v1
 # endpoint, backs up file-backed config when it changes, and execs the harness.
 #
-# Supported harnesses: pi, opencode, codex, copilot
+# Supported harnesses: pi, opencode, codex, copilot, code
 #
 # JSON/JSONC handling:
 #   _strip_jsonc()            — awk program that strips // and /* */ comments
@@ -23,10 +23,10 @@ CORRAL_LAUNCH_PROVIDER_ID="corral-launch"
 
 cmd_launch_usage() {
   cat <<EOF
-Usage: $SCRIPT_NAME launch [--port <port>] <pi|opencode|codex|copilot> [-- <extra args...>]
+Usage: $SCRIPT_NAME launch [--port <port>] <pi|opencode|codex|copilot|code> [-- <extra args...>]
 
 Arguments:
-  pi|opencode|codex|copilot  Supported coding harness to configure and launch.
+  pi|opencode|codex|copilot|code  Supported coding harness to configure and launch.
 
 Options:
   --port <port>      Use a specific running corral server when multiple are active.
@@ -38,13 +38,14 @@ they change.
 
 Notes:
   - pi and opencode work with llama-server and mlx_lm.server.
-  - codex and copilot require llama-server.
+  - codex, copilot, and code require llama-server.
 
 Examples:
   $SCRIPT_NAME launch pi
   $SCRIPT_NAME launch --port 8082 opencode
   $SCRIPT_NAME launch --port 9000 codex
   $SCRIPT_NAME launch --port 9000 copilot
+  $SCRIPT_NAME launch --port 9000 code -- .
 EOF
 }
 
@@ -95,6 +96,10 @@ cmd_launch() {
       require_cmds jq
       _configure_opencode_launch "$REPLY_LAUNCH_ENDPOINT" "$REPLY_LAUNCH_MODEL" "$CORRAL_LAUNCH_PROVIDER_ID" "$REPLY_LAUNCH_CONTEXT_WINDOW" "$REPLY_LAUNCH_MAX_TOKENS"
       ;;
+    code)
+      require_cmds jq
+      _configure_code_launch "$REPLY_LAUNCH_ENDPOINT" "$REPLY_LAUNCH_MODEL" "$REPLY_LAUNCH_CONTEXT_WINDOW"
+      ;;
     copilot)
       ;;
     codex)
@@ -110,6 +115,9 @@ cmd_launch() {
       ;;
     opencode)
       exec opencode "${extra_args[@]+"${extra_args[@]}"}"
+      ;;
+    code)
+      exec code "${extra_args[@]+"${extra_args[@]}"}"
       ;;
     copilot)
       export COPILOT_PROVIDER_BASE_URL="$REPLY_LAUNCH_ENDPOINT"
@@ -157,6 +165,8 @@ _render_launch_template() {
   local model="$4"
   local context_window="${5:-65536}"
   local max_tokens="${6:-4096}"
+  local max_input_tokens="${7:-$context_window}"
+  local max_output_tokens="${8:-$max_tokens}"
   local template
 
   template="$(_get_builtin_launch_template_content "$template_name")" || \
@@ -167,6 +177,8 @@ _render_launch_template() {
   template="${template//__CORRAL_MODEL__/$model}"
   template="${template//__CORRAL_CONTEXT_WINDOW__/$context_window}"
   template="${template//__CORRAL_MAX_TOKENS__/$max_tokens}"
+  template="${template//__CORRAL_MAX_INPUT_TOKENS__/$max_input_tokens}"
+  template="${template//__CORRAL_MAX_OUTPUT_TOKENS__/$max_output_tokens}"
   printf '%s\n' "$template"
 }
 
@@ -353,6 +365,51 @@ _render_merged_json_file() {
   printf '%s\n' "$merged_json"
 }
 
+_render_code_models_file() {
+  local path="$1"
+  local provider_text="$2"
+  local current_text=""
+  local current_json
+  local current_canonical
+  local merged_json
+  local merged_canonical
+
+  if [[ -f "$path" ]]; then
+    current_text="$(cat "$path")"
+  fi
+
+  if [[ -z "${current_text//[$' \t\r\n']/}" ]]; then
+    current_json='[]'
+  else
+    current_json="$(printf '%s' "$current_text" | jq '
+      if type == "array" then .
+      else error("existing chatLanguageModels.json must contain a JSON array")
+      end
+    ')"
+  fi
+
+  merged_json="$(jq -s '
+    (.[0] | map(select(
+      ((.name // "") != "Corral") or
+      ((.vendor // "") != "customendpoint")
+    ))) + [.[1]]
+  ' <(printf '%s\n' "$current_json") <(printf '%s\n' "$provider_text"))"
+
+  current_canonical="$(printf '%s\n' "$current_json" | jq -cS '.')"
+  merged_canonical="$(printf '%s\n' "$merged_json" | jq -cS '.')"
+
+  if [[ -f "$path" && "$current_canonical" == "$merged_canonical" ]]; then
+    if [[ -n "$current_text" && "$current_text" != *$'\n' ]]; then
+      printf '%s\n' "$current_text"
+    else
+      printf '%s' "$current_text"
+    fi
+    return 0
+  fi
+
+  printf '%s\n' "$merged_json"
+}
+
 _report_file_update() {
   local path="$1"
   if [[ "$REPLY_FILE_UPDATED" == "1" ]]; then
@@ -384,7 +441,7 @@ _launch_tool_supports_process() {
     pi|opencode)
       return 0
       ;;
-    codex|copilot)
+    codex|copilot|code)
       [[ "$process_name" == "llama-server" ]]
       return
       ;;
@@ -452,6 +509,28 @@ _opencode_config_path() {
   fi
 }
 
+_code_models_config_path() {
+  case "$(uname -s)" in
+    Darwin)
+      printf '%s\n' "$HOME/Library/Application Support/Code/User/chatLanguageModels.json"
+      ;;
+    Linux)
+      printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/Code/User/chatLanguageModels.json"
+      ;;
+    *)
+      die "code launcher is only supported on macOS and Linux"
+      ;;
+  esac
+}
+
+_set_copilot_token_limits() {
+  local context_window="${1:-65536}"
+
+  [[ "$context_window" =~ ^[1-9][0-9]*$ ]] || context_window="65536"
+  REPLY_LAUNCH_MAX_INPUT_TOKENS="$((context_window * 75 / 100))"
+  REPLY_LAUNCH_MAX_OUTPUT_TOKENS="$((context_window * 125 / 1000))"
+}
+
 _configure_pi_launch() {
   local endpoint="$1"
   local model="$2"
@@ -488,6 +567,28 @@ _configure_opencode_launch() {
 
   patch="$(_render_launch_template "opencode" "$provider_id" "$endpoint" "$model" "$context_window" "$max_tokens")"
   rendered="$(_render_merged_json_file "$config_path" "$patch" "$jsonc_mode")"
+  _write_text_file_with_backup "$config_path" "$rendered"
+  _report_file_update "$config_path"
+}
+
+_configure_code_launch() {
+  local endpoint="$1"
+  local model="$2"
+  local context_window="${3:-}"
+  local config_path provider rendered
+
+  config_path="$(_code_models_config_path)"
+  _set_copilot_token_limits "$context_window"
+  provider="$(_render_launch_template \
+    "code" \
+    "$CORRAL_LAUNCH_PROVIDER_ID" \
+    "$endpoint" \
+    "$model" \
+    "$context_window" \
+    "$REPLY_LAUNCH_MAX_TOKENS" \
+    "$REPLY_LAUNCH_MAX_INPUT_TOKENS" \
+    "$REPLY_LAUNCH_MAX_OUTPUT_TOKENS")"
+  rendered="$(_render_code_models_file "$config_path" "$provider")"
   _write_text_file_with_backup "$config_path" "$rendered"
   _report_file_update "$config_path"
 }
@@ -553,7 +654,7 @@ _parse_launch_args() {
 
 _validate_launch_tool() {
   case "$1" in
-    pi|opencode|codex|copilot) ;;
-    *) die "unsupported launch target '${1}'. Expected one of: pi, opencode, codex, copilot" ;;
+    pi|opencode|codex|copilot|code) ;;
+    *) die "unsupported launch target '${1}'. Expected one of: pi, opencode, codex, copilot, code" ;;
   esac
 }
