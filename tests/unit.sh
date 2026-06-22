@@ -1884,13 +1884,94 @@ EOF
   fi
 }
 
+test_render_code_models_file_replaces_corral_provider() {
+  local path rendered
+  path="${TEST_ROOT}/chatLanguageModels.json"
+  cat >"$path" <<'EOF'
+[
+  {
+    "name": "Copilot",
+    "vendor": "copilot"
+  },
+  {
+    "name": "Corral",
+    "vendor": "customendpoint",
+    "models": [
+      {
+        "id": "old/model"
+      }
+    ]
+  }
+]
+EOF
+
+  rendered="$(_render_code_models_file "$path" '{"name":"Corral","vendor":"customendpoint","apiType":"chat-completions","models":[{"id":"demo/server-model"}]}')"
+
+  if assert_eq "$(printf '%s\n' "$rendered" | jq 'length')" '2' && \
+     assert_eq "$(printf '%s\n' "$rendered" | jq -r '.[0].name')" 'Copilot' && \
+     assert_eq "$(printf '%s\n' "$rendered" | jq -r '.[1].models[0].id')" 'demo/server-model'; then
+    pass 'render code models file replaces Corral provider'
+  else
+    fail 'render code models file replaces Corral provider' "unexpected merged providers: $rendered"
+  fi
+}
+
+test_set_copilot_token_limits_uses_context_percentages_and_fallback() {
+  _set_copilot_token_limits 131072
+  if ! assert_eq "$REPLY_LAUNCH_MAX_INPUT_TOKENS" '98304' || \
+     ! assert_eq "$REPLY_LAUNCH_MAX_OUTPUT_TOKENS" '16384'; then
+    fail 'copilot token limits use context percentages and fallback' "unexpected limits for 131072: input=${REPLY_LAUNCH_MAX_INPUT_TOKENS} output=${REPLY_LAUNCH_MAX_OUTPUT_TOKENS}"
+    return
+  fi
+
+  _set_copilot_token_limits ""
+  if assert_eq "$REPLY_LAUNCH_MAX_INPUT_TOKENS" '49152' && \
+     assert_eq "$REPLY_LAUNCH_MAX_OUTPUT_TOKENS" '8192'; then
+    pass 'copilot token limits use context percentages and fallback'
+  else
+    fail 'copilot token limits use context percentages and fallback' "unexpected fallback limits: input=${REPLY_LAUNCH_MAX_INPUT_TOKENS} output=${REPLY_LAUNCH_MAX_OUTPUT_TOKENS}"
+  fi
+}
+
+test_code_models_config_path_uses_platform_user_dir() {
+  local original_xdg="${XDG_CONFIG_HOME-}"
+  local mac_path linux_path
+
+  uname() {
+    printf 'Darwin\n'
+  }
+  mac_path="$(_code_models_config_path)"
+
+  uname() {
+    printf 'Linux\n'
+  }
+  XDG_CONFIG_HOME="${TEST_ROOT}/xdg"
+  linux_path="$(_code_models_config_path)"
+
+  unset -f uname
+  if [[ -n "$original_xdg" ]]; then
+    XDG_CONFIG_HOME="$original_xdg"
+  else
+    unset XDG_CONFIG_HOME
+  fi
+
+  if assert_eq "$mac_path" "$HOME/Library/Application Support/Code/User/chatLanguageModels.json" && \
+     assert_eq "$linux_path" "${TEST_ROOT}/xdg/Code/User/chatLanguageModels.json"; then
+    pass 'code models config path uses platform user directory'
+  else
+    fail 'code models config path uses platform user directory' "unexpected paths: mac='$mac_path' linux='$linux_path'"
+  fi
+}
+
 test_launch_tool_supports_process_matrix() {
   if _launch_tool_supports_process pi mlx_lm.server && \
      _launch_tool_supports_process opencode llama-server && \
      _launch_tool_supports_process copilot llama-server && \
      _launch_tool_supports_process codex llama-server && \
+     _launch_tool_supports_process code llama-server && \
      ! _launch_tool_supports_process copilot mlx_lm.server && \
      ! _launch_tool_supports_process codex mlx_lm.server && \
+     ! _launch_tool_supports_process code mlx_lm.server && \
      ! _launch_tool_supports_process pi llama-cli; then
     pass 'launch tool support matrix'
   else
@@ -1937,9 +2018,9 @@ test_completions_include_launch() {
   bash_out="$(completions_bash)"
 
   if assert_contains "$fish_out" 'launch' && \
-     assert_contains "$fish_out" 'pi opencode codex copilot' && \
+     assert_contains "$fish_out" 'pi opencode codex copilot code' && \
      assert_contains "$zsh_out" 'launch:Configure and launch a supported coding harness' && \
-     assert_contains "$bash_out" 'pi opencode codex copilot'; then
+     assert_contains "$bash_out" 'pi opencode codex copilot code'; then
     pass 'completions include launch'
   else
     fail 'completions include launch' 'expected launch command and tool completions in generated shells'
@@ -2050,6 +2131,9 @@ else
   test_render_merged_json_file_preserves_unrelated_keys
   test_render_merged_json_file_accepts_jsonc
   test_render_merged_json_file_migrates_pi_models_schema
+  test_render_code_models_file_replaces_corral_provider
+  test_set_copilot_token_limits_uses_context_percentages_and_fallback
+  test_code_models_config_path_uses_platform_user_dir
   test_launch_tool_supports_process_matrix
   test_toml_string_literal_escapes_values
   test_write_codex_model_catalog_uses_freeform_tools_metadata

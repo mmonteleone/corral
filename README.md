@@ -18,7 +18,7 @@ corral launch pi
 - The full Hugging Face model registry, not just what Ollama ships
 - Model search and discovery against Hugging Face from the command line
 - Saved, templated, profiles for pinning a model with a specific set of flags
-- Pre-configured launcher for tools including [OpenCode](https://opencode.ai), [Pi](https://pi.dev), [GitHub Copilot](https://github.com/features/copilot), and [Codex](https://openai.com/codex/)
+- Pre-configured launcher for tools including [OpenCode](https://opencode.ai), [Pi](https://pi.dev), [Codex](https://openai.com/codex/), [GitHub Copilot CLI](https://github.com/features/copilot/cli), and [GitHub Copilot in Visual Studio Code](https://code.visualstudio.com/).
 - Command, model, profile, and quant shell completions for fish, zsh, and bash
 - Standard HF cache. Downloaded models are visible to other tools
 
@@ -68,8 +68,9 @@ corral serve gemma-coder
 # Launch supported coding harnesses against a running server
 corral launch pi
 corral launch opencode
-corral launch copilot
 corral launch codex
+corral launch copilot
+corral launch code
 
 # List models, installed engines, profiles, templates
 corral list
@@ -85,7 +86,7 @@ corral remove coder
 | `install` | Install backend(s) and shell completions |
 | `run MODEL\|PROFILE` | Interactive chat (`llama-cli` / `mlx_lm.chat`) |
 | `serve MODEL\|PROFILE` | OpenAI-compatible server (`llama-server` / `mlx_lm.server`) |
-| `launch TOOL` | Configure and launch `pi`, `opencode`, `copilot`, or `codex` against a running server |
+| `launch TOOL` | Configure and launch `pi`, `opencode`, `copilot`, `codex`, or `code` against a running server |
 | `pull MODEL` | Download model artifacts without running |
 | `search [QUERY]` | Search Hugging Face for compatible models |
 | `browse MODEL` | Open a model's Hugging Face page in the browser |
@@ -247,7 +248,7 @@ _Ensure you uncomment the profile's use of MTP:_
 
 `corral launch` configures a supported coding harness to use a currently running `corral serve` instance, then launches the harness.
 
-Supported harnesses currently include `pi`, `opencode`, `copilot`, and `codex`. Corral inspects running servers via `corral ps`, matches the server's local OpenAI-compatible endpoint, model, context window, and max tokens, and configures the harness for that invocation. Existing `pi` and `opencode` configs are preserved with a timestamped backup next to any modified config file. `copilot launch` exports `COPILOT_PROVIDER_BASE_URL`, `COPILOT_MODEL`, `COPILOT_PROVIDER_MAX_PROMPT_TOKENS`, and `COPILOT_PROVIDER_MAX_OUTPUT_TOKENS` based on the running server's discovered context window. `codex` and `copilot` launch currently require the `llama.cpp` backend.
+Supported harnesses currently include `pi`, `opencode`, `codex`, `copilot`, and `code`. Corral inspects running servers via `corral ps`, matches the server's local OpenAI-compatible endpoint, model, context window, and max tokens, and configures the harness for that invocation. Existing file-backed configs are preserved with a timestamped backup next to any modified config file. `copilot launch` exports `COPILOT_PROVIDER_BASE_URL`, `COPILOT_MODEL`, `COPILOT_PROVIDER_MAX_PROMPT_TOKENS`, and `COPILOT_PROVIDER_MAX_OUTPUT_TOKENS` based on the running server's discovered context window. `code` updates VS Code's `chatLanguageModels.json` with a Corral custom endpoint using the same token limits. `codex`, `copilot`, and `code` currently require the `llama.cpp` backend.
 
 ## Shell completions
 

@@ -445,6 +445,11 @@ test_generated_standalone_script() {
     return
   fi
 
+  if ! grep -q 'code)' "$generated_script"; then
+    fail 'generated standalone script inlines launch templates' 'expected standalone script to include the embedded code launch template'
+    return
+  fi
+
   # shellcheck disable=SC2016  # single-quoted grep pattern is intentional literal
   if grep -q 'jq_path="$(cd "$(dirname "${BASH_SOURCE\[0\]}")" && pwd)/../jq/search-quants.jq"' "$generated_script"; then
     fail 'generated standalone script inlines search jq asset' 'expected standalone script to inline search-quants.jq instead of reading src/jq at runtime'
@@ -1736,6 +1741,99 @@ EOF
     pass 'launch opencode updates jsonc and launches tool'
   else
     fail 'launch opencode updates jsonc and launches tool' "expected opencode launch to merge JSONC config and exec opencode; config=$(cat "$config_path" 2>/dev/null || echo missing), stdout=$(cat "$stdout_file" 2>/dev/null || echo empty), stderr=$(cat "$stderr_file" 2>/dev/null || echo empty), launch_log=$(cat "${CORRAL_TEST_LOG_DIR}/launch.log" 2>/dev/null || echo missing), XDG_CONFIG_HOME=${XDG_CONFIG_HOME-unset}"
+  fi
+}
+
+test_launch_code_updates_models_config_and_launches_tool() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+  local config_dir="${HOME}/.config/Code/User"
+  local config_path="${config_dir}/chatLanguageModels.json"
+  local backup_count_first backup_count_second
+
+  write_mock_ps "${TEST_DIR}/bin/ps"
+  write_mock_exec_tool "${TEST_DIR}/bin/code"
+  mkdir -p "$config_dir"
+
+  cat >"$config_path" <<'EOF'
+[
+  {
+    "name": "Copilot",
+    "vendor": "copilot",
+    "settings": {
+      "gpt-5-mini": {
+        "reasoningEffort": "high"
+      }
+    }
+  },
+  {
+    "name": "Corral",
+    "vendor": "customendpoint",
+    "models": [
+      {
+        "id": "old/model",
+        "url": "http://127.0.0.1:8080/v1"
+      }
+    ]
+  }
+]
+EOF
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" launch --port 9000 code -- .
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'launch code updates models config and launches tool' "launch code failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  if ! assert_eq "$(jq 'length' "$config_path")" '2' || \
+     ! assert_eq "$(jq -r '.[0].name' "$config_path")" 'Copilot' || \
+     ! assert_eq "$(jq -r '.[1].vendor' "$config_path")" 'customendpoint' || \
+     ! assert_eq "$(jq -r '.[1].models[0].id' "$config_path")" 'demo/server-model' || \
+     ! assert_eq "$(jq -r '.[1].models[0].url' "$config_path")" 'http://127.0.0.1:9000/v1' || \
+     ! assert_eq "$(jq -r '.[1].models[0].maxInputTokens' "$config_path")" '98304' || \
+     ! assert_eq "$(jq -r '.[1].models[0].maxOutputTokens' "$config_path")" '16384' || \
+     ! assert_contains "$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")" 'code|.'; then
+    fail 'launch code updates models config and launches tool' "unexpected config or invocation: config=$(cat "$config_path"), log=$(cat "${CORRAL_TEST_LOG_DIR}/launch.log")"
+    return
+  fi
+
+  backup_count_first="$(find "$config_dir" -name '*.bak.*' | wc -l | tr -d ' ')"
+  if [[ "$backup_count_first" != "1" ]]; then
+    fail 'launch code backs up changed config only once' "expected one backup, got ${backup_count_first}"
+    return
+  fi
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" launch --port 9000 code
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'launch code reuses matching config' "second launch code failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  backup_count_second="$(find "$config_dir" -name '*.bak.*' | wc -l | tr -d ' ')"
+  if [[ "$backup_count_second" == "$backup_count_first" ]] && \
+     assert_contains "$(cat "$stdout_file")" 'Config already matched'; then
+    pass 'launch code updates models config and launches tool'
+    pass 'launch code backs up changed config only once'
+    pass 'launch code reuses matching config'
+  else
+    fail 'launch code reuses matching config' "expected backup count ${backup_count_first}, got ${backup_count_second}"
+  fi
+}
+
+test_launch_code_rejects_mlx_server() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  write_mock_ps "${TEST_DIR}/bin/ps"
+  write_mock_exec_tool "${TEST_DIR}/bin/code"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" launch --port 8082 code
+
+  if [[ $RUN_STATUS -ne 0 ]] && \
+     assert_contains "$(cat "$stderr_file")" 'no compatible corral server found'; then
+    pass 'launch code rejects mlx server'
+  else
+    fail 'launch code rejects mlx server' "expected code launcher to reject mlx_lm.server: $(cat "$stderr_file")"
   fi
 }
 
@@ -5856,6 +5954,12 @@ main() {
 
     setup_test_env
     test_launch_opencode_updates_jsonc_and_launches_tool
+
+    setup_test_env
+    test_launch_code_updates_models_config_and_launches_tool
+
+    setup_test_env
+    test_launch_code_rejects_mlx_server
 
     setup_test_env
     test_launch_copilot_sets_env_and_launches_tool
