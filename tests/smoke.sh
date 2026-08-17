@@ -2828,9 +2828,9 @@ test_mlx_list_discovers_cache() {
 test_mlx_list_discovers_safetensors_cache() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
-  local model_name='unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit'
+  local model_name='unsloth/Qwen3.8-27B-UD-MLX-4bit'
 
-  local mlx_cache_dir="${HOME}/.cache/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-UD-MLX-4bit"
+  local mlx_cache_dir="${HOME}/.cache/huggingface/hub/models--unsloth--Qwen3.8-27B-UD-MLX-4bit"
   mkdir -p "${mlx_cache_dir}/snapshots/abc123"
   : >"${mlx_cache_dir}/snapshots/abc123/model.safetensors"
 
@@ -3329,7 +3329,7 @@ test_list_includes_templates_section() {
     fail 'list includes templates section' "expected user template row, got: $out"
     return
   fi
-  if ! assert_contains "$out" 'general' || ! assert_contains "$out" 'qwen-3-general' || ! assert_contains "$out" 'unsloth/Qwen3.6-35B-A3B-MTP-GGUF:UD-Q4_K_XL'; then
+  if ! assert_contains "$out" 'general' || ! assert_contains "$out" 'qwen-3-general' || ! assert_contains "$out" 'unsloth/Qwen3.8-27B-GGUF:Q4_K_M'; then
     fail 'list includes templates section' "expected built-in templates in list output, got: $out"
     return
   fi
@@ -4999,7 +4999,7 @@ test_profile_set_builtin_uses_default_model() {
 
   local content
   content="$(cat "$stdout_file")"
-  if ! assert_contains "$content" 'model=unsloth/Qwen3.6-35B-A3B-MTP-GGUF:UD-Q4_K_XL'; then
+  if ! assert_contains "$content" 'model=unsloth/Qwen3.8-27B-GGUF:Q4_K_M'; then
     fail 'profile set builtin uses default model' "expected default model from built-in template, got: $content"
     return
   fi

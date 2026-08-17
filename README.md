@@ -170,7 +170,7 @@ corral profile qwen-coder qwen-3-code
 corral serve qwen-coder
 
 # Override to a specific model/quant
-corral profile qwen-coder qwen-3-code unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q5_K_L
+corral profile qwen-coder qwen-3-code unsloth/Qwen3.8-27B-GGUF:Q4_K_M
 corral serve qwen-coder
 ```
 
