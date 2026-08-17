@@ -383,10 +383,39 @@ test_collect_cached_model_entries() {
   fi
 }
 
+test_collect_cached_model_entries_deduplicates_shared_snapshot_blobs() {
+  local old_hf_hub_dir="$HF_HUB_DIR"
+  HF_HUB_DIR="${TEST_ROOT}/collect-shared-blob-hub"
+  local cache_dir="${HF_HUB_DIR}/models--alice--shared-model"
+  local blob_dir="${cache_dir}/blobs"
+  local blob_path="${blob_dir}/shared-q4-k-m"
+  local snapshot_one="${cache_dir}/snapshots/abc123"
+  local snapshot_two="${cache_dir}/snapshots/def456"
+  mkdir -p "$blob_dir" "$snapshot_one" "$snapshot_two"
+  dd if=/dev/zero of="$blob_path" bs=1024 count=2 2>/dev/null
+  ln -s "../../blobs/shared-q4-k-m" "${snapshot_one}/shared-Q4_K_M.gguf"
+  ln -s "../../blobs/shared-q4-k-m" "${snapshot_two}/shared-Q4_K_M.gguf"
+
+  local expected_size
+  expected_size="$(du -sh "$blob_path" | cut -f1)"
+  local result
+  result="$(collect_cached_model_entries)"
+  HF_HUB_DIR="$old_hf_hub_dir"
+
+  local size="${result#*|}"
+  size="${size#*|}"
+  size="${size%%|*}"
+  if assert_eq "$size" "$expected_size"; then
+    pass 'collect_cached_model_entries deduplicates shared snapshot blobs'
+  else
+    fail 'collect_cached_model_entries deduplicates shared snapshot blobs' "expected size='$expected_size', got: $result"
+  fi
+}
+
 test_collect_mlx_model_entries_includes_safetensors_cache() {
   local old_hf_hub_dir="$HF_HUB_DIR"
   HF_HUB_DIR="${TEST_ROOT}/collect-mlx-hub"
-  local cache_dir="${HF_HUB_DIR}/models--unsloth--Qwen3.6-35B-A3B-UD-MLX-4bit"
+  local cache_dir="${HF_HUB_DIR}/models--unsloth--Qwen3.8-27B-UD-MLX-4bit"
   local snapshot_dir="${cache_dir}/snapshots/abc123"
   mkdir -p "$snapshot_dir"
   printf 'x' > "${snapshot_dir}/model.safetensors"
@@ -395,7 +424,7 @@ test_collect_mlx_model_entries_includes_safetensors_cache() {
   result="$(collect_mlx_model_entries)"
   HF_HUB_DIR="$old_hf_hub_dir"
 
-  if assert_contains "$result" 'unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit' && assert_contains "$result" '|mlx'; then
+  if assert_contains "$result" 'unsloth/Qwen3.8-27B-UD-MLX-4bit' && assert_contains "$result" '|mlx'; then
     pass 'collect_mlx_model_entries includes safetensors cache'
   else
     fail 'collect_mlx_model_entries includes safetensors cache' "got: $result"
@@ -405,7 +434,7 @@ test_collect_mlx_model_entries_includes_safetensors_cache() {
 test_collect_mlx_model_entries_ignores_gguf_cache() {
   local old_hf_hub_dir="$HF_HUB_DIR"
   HF_HUB_DIR="${TEST_ROOT}/collect-mlx-ignore-gguf"
-  local cache_dir="${HF_HUB_DIR}/models--unsloth--Qwen3.6-35B-A3B-GGUF"
+  local cache_dir="${HF_HUB_DIR}/models--unsloth--Qwen3.8-27B-GGUF"
   local snapshot_dir="${cache_dir}/snapshots/abc123"
   mkdir -p "$snapshot_dir"
   printf 'x' > "${snapshot_dir}/model-Q4_K_M.gguf"
@@ -414,7 +443,7 @@ test_collect_mlx_model_entries_ignores_gguf_cache() {
   result="$(collect_mlx_model_entries)"
   HF_HUB_DIR="$old_hf_hub_dir"
 
-  if ! assert_contains "$result" 'unsloth/Qwen3.6-35B-A3B-GGUF'; then
+  if ! assert_contains "$result" 'unsloth/Qwen3.8-27B-GGUF'; then
     pass 'collect_mlx_model_entries ignores gguf cache'
   else
     fail 'collect_mlx_model_entries ignores gguf cache' "got: $result"
@@ -424,7 +453,7 @@ test_collect_mlx_model_entries_ignores_gguf_cache() {
 test_collect_mlx_model_entries_ignores_no_weights_cache() {
   local old_hf_hub_dir="$HF_HUB_DIR"
   HF_HUB_DIR="${TEST_ROOT}/collect-mlx-no-weights"
-  local cache_dir="${HF_HUB_DIR}/models--unsloth--Qwen3.6-35B-A3B-Empty"
+  local cache_dir="${HF_HUB_DIR}/models--unsloth--Qwen3.8-27B-Empty"
   local snapshot_dir="${cache_dir}/snapshots/abc123"
   mkdir -p "$snapshot_dir"
   printf 'x' > "${snapshot_dir}/README.md"
@@ -433,7 +462,7 @@ test_collect_mlx_model_entries_ignores_no_weights_cache() {
   result="$(collect_mlx_model_entries)"
   HF_HUB_DIR="$old_hf_hub_dir"
 
-  if ! assert_contains "$result" 'unsloth/Qwen3.6-35B-A3B-Empty'; then
+  if ! assert_contains "$result" 'unsloth/Qwen3.8-27B-Empty'; then
     pass 'collect_mlx_model_entries ignores cache without model weights'
   else
     fail 'collect_mlx_model_entries ignores cache without model weights' "got: $result"
@@ -1582,7 +1611,7 @@ test_collect_template_entries_includes_builtins() {
   result="$(collect_template_entries)"
   if assert_contains "$result" 'code|built-in|(none)' && \
      assert_contains "$result" 'general|built-in|(none)' && \
-     assert_contains "$result" 'qwen-3-general|built-in|unsloth/Qwen3.6-35B-A3B-MTP-GGUF:UD-Q4_K_XL'; then
+     assert_contains "$result" 'qwen-3-general|built-in|unsloth/Qwen3.8-27B-GGUF:Q4_K_M'; then
     pass 'collect_template_entries includes built-ins with default models'
   else
     fail 'collect_template_entries includes built-ins with default models' "got: $result"
@@ -1993,7 +2022,7 @@ test_toml_string_literal_escapes_values() {
 test_write_codex_model_catalog_uses_freeform_tools_metadata() {
   local catalog shell_type apply_patch_tool search_enabled context_window
 
-  _write_codex_model_catalog 'unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL' 32768
+  _write_codex_model_catalog 'unsloth/Qwen3.8-27B-GGUF:Q4_K_M' 32768
   catalog="$REPLY_CODEX_MODEL_CATALOG"
 
   shell_type="$(jq -r '.models[0].shell_type' "$catalog")"
@@ -2060,6 +2089,7 @@ else
   test_cache_has_quant_match
   test_cache_has_quant_no_match
   test_collect_cached_model_entries
+  test_collect_cached_model_entries_deduplicates_shared_snapshot_blobs
   test_collect_mlx_model_entries_includes_safetensors_cache
   test_collect_mlx_model_entries_ignores_gguf_cache
   test_collect_mlx_model_entries_ignores_no_weights_cache
