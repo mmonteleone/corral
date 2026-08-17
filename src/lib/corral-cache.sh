@@ -294,13 +294,35 @@ collect_cached_model_entries() {
         matching_files+=("$f")
       done < <(find_cached_gguf_paths_by_quant "$dir" "$tag")
 
+      # Snapshot entries are symlinks to content-addressed blobs. Multiple
+      # revisions can therefore expose the same physical file under different
+      # paths. Resolve and deduplicate the targets before measuring so shared
+      # blobs are counted once.
+      local unique_files=()
+      local resolved_file
+      for f in "${matching_files[@]}"; do
+        resolved_file="$(resolve_link "$f")"
+        [[ -n "$resolved_file" ]] || continue
+        local already_seen="false"
+        local unique_file
+        if [[ ${#unique_files[@]} -gt 0 ]]; then
+          for unique_file in "${unique_files[@]}"; do
+            if [[ "$unique_file" == "$resolved_file" ]]; then
+              already_seen="true"
+              break
+            fi
+          done
+        fi
+        [[ "$already_seen" == "true" ]] || unique_files+=("$resolved_file")
+      done
+
       # du -shL: -s summarize (one total), -h human-readable, -L follow symlinks.
       # du -chL: same but -c adds a grand total line (we grab it with tail -1).
       local size
-      if [[ ${#matching_files[@]} -eq 1 ]]; then
-        size="$(du -shL "${matching_files[0]}" 2>/dev/null | cut -f1)"
-      elif [[ ${#matching_files[@]} -gt 1 ]]; then
-        size="$(du -chL "${matching_files[@]}" 2>/dev/null | tail -1 | cut -f1)"
+      if [[ ${#unique_files[@]} -eq 1 ]]; then
+        size="$(du -shL "${unique_files[0]}" 2>/dev/null | cut -f1)"
+      elif [[ ${#unique_files[@]} -gt 1 ]]; then
+        size="$(du -chL "${unique_files[@]}" 2>/dev/null | tail -1 | cut -f1)"
       else
         size='?'
       fi

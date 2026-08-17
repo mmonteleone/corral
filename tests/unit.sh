@@ -383,6 +383,35 @@ test_collect_cached_model_entries() {
   fi
 }
 
+test_collect_cached_model_entries_deduplicates_shared_snapshot_blobs() {
+  local old_hf_hub_dir="$HF_HUB_DIR"
+  HF_HUB_DIR="${TEST_ROOT}/collect-shared-blob-hub"
+  local cache_dir="${HF_HUB_DIR}/models--alice--shared-model"
+  local blob_dir="${cache_dir}/blobs"
+  local blob_path="${blob_dir}/shared-q4-k-m"
+  local snapshot_one="${cache_dir}/snapshots/abc123"
+  local snapshot_two="${cache_dir}/snapshots/def456"
+  mkdir -p "$blob_dir" "$snapshot_one" "$snapshot_two"
+  dd if=/dev/zero of="$blob_path" bs=1024 count=2 2>/dev/null
+  ln -s "../../blobs/shared-q4-k-m" "${snapshot_one}/shared-Q4_K_M.gguf"
+  ln -s "../../blobs/shared-q4-k-m" "${snapshot_two}/shared-Q4_K_M.gguf"
+
+  local expected_size
+  expected_size="$(du -sh "$blob_path" | cut -f1)"
+  local result
+  result="$(collect_cached_model_entries)"
+  HF_HUB_DIR="$old_hf_hub_dir"
+
+  local size="${result#*|}"
+  size="${size#*|}"
+  size="${size%%|*}"
+  if assert_eq "$size" "$expected_size"; then
+    pass 'collect_cached_model_entries deduplicates shared snapshot blobs'
+  else
+    fail 'collect_cached_model_entries deduplicates shared snapshot blobs' "expected size='$expected_size', got: $result"
+  fi
+}
+
 test_collect_mlx_model_entries_includes_safetensors_cache() {
   local old_hf_hub_dir="$HF_HUB_DIR"
   HF_HUB_DIR="${TEST_ROOT}/collect-mlx-hub"
@@ -2060,6 +2089,7 @@ else
   test_cache_has_quant_match
   test_cache_has_quant_no_match
   test_collect_cached_model_entries
+  test_collect_cached_model_entries_deduplicates_shared_snapshot_blobs
   test_collect_mlx_model_entries_includes_safetensors_cache
   test_collect_mlx_model_entries_ignores_gguf_cache
   test_collect_mlx_model_entries_ignores_no_weights_cache
