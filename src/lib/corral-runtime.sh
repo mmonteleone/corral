@@ -96,20 +96,23 @@ _github_get() {
     "$url"
 }
 
-# Fetch the release JSON for a given tag, or the latest release if tag is empty.
+# Fetch the release JSON for a given tag, or the latest numbered nightly release
+# if tag is empty. GitHub's /releases/latest endpoint excludes prereleases, and
+# llama.cpp publishes its rolling binary builds as b#### prereleases.
 _get_release_json() {
   local tag="$1"
   if [[ -n "$tag" ]]; then
     _github_get "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/${tag}"
   else
-    _github_get "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+    _github_get "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=100" |
+      jq 'map(select((.tag_name // "") | test("^b[0-9]+$"))) | first // {}'
   fi
 }
 
 # Return just the tag name string of the latest llama.cpp release.
 # 'jq -r' outputs the raw string without JSON quotes.
 _get_latest_tag() {
-  _get_release_json "" | jq -r '.tag_name'
+  _get_release_json "" | jq -r '.tag_name // empty'
 }
 
 
