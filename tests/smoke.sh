@@ -135,6 +135,24 @@ write_release_json() {
 EOF
 }
 
+write_release_list_json() {
+  local fixtures_dir="$1"
+  shift
+  local json_path="${fixtures_dir}/release-list.json"
+  local first="true"
+  local tag
+
+  {
+    printf '[\n'
+    for tag in "$@"; do
+      [[ "$first" == "true" ]] || printf ',\n'
+      cat "${fixtures_dir}/release-${tag}.json"
+      first="false"
+    done
+    printf '\n]\n'
+  } >"$json_path"
+}
+
 write_latest_pointer() {
   local state_dir="$1"
   local tag="$2"
@@ -198,6 +216,16 @@ printf '%s\n' "$url" >>"${CORRAL_TEST_LOG_DIR}/curl.log"
 if [[ "$url" == *"/releases/latest" ]]; then
   tag="$(cat "${CORRAL_TEST_STATE_DIR}/latest-tag")"
   cat "${CORRAL_TEST_FIXTURES_DIR}/release-${tag}.json" | emit_body
+  exit 0
+fi
+
+if [[ "$url" == *"/releases?per_page=100" ]]; then
+  if [[ -f "${CORRAL_TEST_FIXTURES_DIR}/release-list.json" ]]; then
+    cat "${CORRAL_TEST_FIXTURES_DIR}/release-list.json" | emit_body
+  else
+    tag="$(cat "${CORRAL_TEST_STATE_DIR}/latest-tag")"
+    printf '[%s]\n' "$(cat "${CORRAL_TEST_FIXTURES_DIR}/release-${tag}.json")" | emit_body
+  fi
   exit 0
 fi
 
@@ -839,6 +867,44 @@ test_update_flow() {
   fi
 
   pass 'mocked update flow'
+}
+
+test_update_prefers_latest_nightly_over_semver_release() {
+  local arch
+  local install_root="${HOME}/install-root"
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+
+  arch="$(expected_arch)"
+  create_fixture_tarball "$CORRAL_TEST_FIXTURES_DIR" 'b10514' "$arch"
+  create_fixture_tarball "$CORRAL_TEST_FIXTURES_DIR" 'b10673' "$arch"
+  create_fixture_tarball "$CORRAL_TEST_FIXTURES_DIR" 'v0.3.0' "$arch"
+  write_release_json "$CORRAL_TEST_FIXTURES_DIR" 'b10514' "$arch"
+  write_release_json "$CORRAL_TEST_FIXTURES_DIR" 'b10673' "$arch"
+  write_release_json "$CORRAL_TEST_FIXTURES_DIR" 'v0.3.0' "$arch"
+
+  write_latest_pointer "$CORRAL_TEST_STATE_DIR" 'b10514'
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" install --path "$install_root" --no-shell-profile
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'update prefers latest nightly over semver release' "initial install failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  # The semver release is listed first to ensure latest-tag resolution filters
+  # for the rolling b#### releases instead of using /releases/latest semantics.
+  write_release_list_json "$CORRAL_TEST_FIXTURES_DIR" 'v0.3.0' 'b10673'
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" update --path "$install_root" --no-shell-profile
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'update prefers latest nightly over semver release' "update failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  if ! assert_eq "$(basename "$(readlink "${install_root}/current")")" 'llama-b10673'; then
+    fail 'update prefers latest nightly over semver release' 'expected current symlink to point at llama-b10673 after update'
+    return
+  fi
+
+  pass 'update prefers latest nightly over semver release'
 }
 
 test_pull_noninteractive() {
@@ -5906,6 +5972,9 @@ main() {
 
     setup_test_env
     test_update_flow
+
+    setup_test_env
+    test_update_prefers_latest_nightly_over_semver_release
 
     setup_test_env
     test_pull_noninteractive
