@@ -2335,8 +2335,8 @@ test_template_backend_sections_inherited_by_profile() {
     fail 'template backend sections inherited by profile' "expected [llama.cpp] section from qwen template, got: $profile_content"
     return
   fi
-  if ! assert_contains "$profile_content" '--flash-attn on'; then
-    fail 'template backend sections inherited by profile' "expected llama.cpp flag from qwen template, got: $profile_content"
+  if ! assert_contains "$profile_content" '--ctx-size 65536'; then
+    fail 'template backend sections inherited by profile' "expected llama.cpp context flag from qwen template, got: $profile_content"
     return
   fi
 
@@ -5160,8 +5160,8 @@ test_profile_set_builtin_with_model() {
     fail 'profile set from builtin with model' "expected qwen template flag --temp, got: $content"
     return
   fi
-  if ! assert_contains "$content" "--gpu-layers all"; then
-    fail 'profile set from builtin with model' "expected qwen template flag --gpu-layers, got: $content"
+  if ! assert_contains "$content" "--ctx-size 65536"; then
+    fail 'profile set from builtin with model' "expected qwen template flag --ctx-size, got: $content"
     return
   fi
 
@@ -5321,8 +5321,8 @@ test_template_show_builtin() {
     fail 'show builtin template' "expected '--temp 1.0' in qwen template, got: $out"
     return
   fi
-  if ! assert_contains "$out" "--gpu-layers all"; then
-    fail 'show builtin template' "expected '--gpu-layers all' in qwen template, got: $out"
+  if ! assert_contains "$out" "--ctx-size 65536"; then
+    fail 'show builtin template' "expected '--ctx-size 65536' in qwen template, got: $out"
     return
   fi
 
@@ -5603,8 +5603,8 @@ test_show_template_by_name() {
     fail 'show template by name' "expected --temp 1.0, got: $out"
     return
   fi
-  if ! assert_contains "$out" "--gpu-layers all"; then
-    fail 'show template by name' "expected --gpu-layers all, got: $out"
+  if ! assert_contains "$out" "--ctx-size 65536"; then
+    fail 'show template by name' "expected --ctx-size 65536, got: $out"
     return
   fi
 
