@@ -661,7 +661,7 @@ test_builtin_template_glimmer() {
   result="$(_get_builtin_template_content "glimmer")"
   if assert_contains "$result" "model=meta-models/Muse-Glimmer-30B-GGUF:Q4_K_M" && \
      assert_contains "$result" "[mlx.serve]" && \
-     assert_contains "$result" "--reasoning auto"; then
+     assert_contains "$result" "--n-predict 8192"; then
     pass 'builtin template glimmer'
   else
     fail 'builtin template glimmer' "got: $result"
