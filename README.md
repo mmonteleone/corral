@@ -2,7 +2,7 @@
 
 Run local models with the ease of [Ollama](https://ollama.com) and full power of official [llama.cpp](https://github.com/ggml-org/llama.cpp) releases and [MLX](https://github.com/ml-explore/mlx-lm) on Apple Silicon.
 
-**Corral is just a shell script**. It installs and updates official latest llama.cpp and MLX releases, uses the standard Hugging Face registry for models, and provides an Ollama-style CLI for running and managing local models: *search*, *pull*, *run*, *serve*, *launch*, *list*, *remove*, *update*, etc. along with templated usage profiles and tool launchers.
+**Corral is just a shell script**. It installs and updates the latest official llama.cpp builds and the latest MLX (`mlx-lm`) main-branch commit, uses the standard Hugging Face registry for models, and provides an Ollama-style CLI for running and managing local models: *search*, *pull*, *run*, *serve*, *launch*, *list*, *remove*, *update*, etc. along with templated usage profiles and tool launchers.
 
 ```sh
 corral search gemma
@@ -44,7 +44,7 @@ corral install
 
 On Apple Silicon this installs **both** llama.cpp (`llama-cli`, `llama-server`) and MLX (`mlx-lm`). On other platforms, llama.cpp only. Restrict with `--backend llama.cpp` or `--backend mlx`.
 
-`corral install` downloads the latest official llama.cpp release and, after prompting, adds it to `$PATH` and installs shell completions. Pass `--shell-profile` to accept automatically, or `--no-shell-profile` to skip. For MLX, corral installs `mlx-lm` via `uv` (offering to install `uv` via Homebrew if needed).
+`corral install` downloads the latest official llama.cpp release and, after prompting, adds it to `$PATH` and installs shell completions. Pass `--shell-profile` to accept automatically, or `--no-shell-profile` to skip. For MLX, corral installs the latest `mlx-lm` commit from the upstream `main` branch via `uv` (offering to install `uv` via Homebrew if needed). Main-branch builds are newer but may be less stable than published releases.
 
 ## Quick start
 

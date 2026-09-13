@@ -2088,8 +2088,8 @@ EOF
     return
   fi
 
-  if ! assert_contains "$(cat "$uv_log")" 'tool install mlx-lm'; then
-    fail 'mlx install uses uv flow' "expected uv install call, got: $(cat "$uv_log")"
+  if ! assert_contains "$(cat "$uv_log")" 'tool install git+https://github.com/ml-explore/mlx-lm.git@main'; then
+    fail 'mlx install uses uv flow' "expected uv Git install call, got: $(cat "$uv_log")"
     return
   fi
 
@@ -2771,7 +2771,7 @@ EOF
   pass 'mlx remove blocks model in use by chat'
 }
 
-test_mlx_update_uses_uv_upgrade() {
+test_mlx_update_refreshes_git_install() {
   local stdout_file="${TEST_DIR}/stdout"
   local stderr_file="${TEST_DIR}/stderr"
   local uv_log="${TEST_DIR}/uv.log"
@@ -2796,16 +2796,72 @@ EOF
 
   run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" update --backend mlx
   if [[ $RUN_STATUS -ne 0 ]]; then
-    fail 'mlx update uses uv tool upgrade' "update failed: $(cat "$stderr_file")"
+    fail 'mlx update refreshes uv Git install' "update failed: $(cat "$stderr_file")"
     return
   fi
 
-  if ! assert_contains "$(cat "$uv_log")" 'tool upgrade mlx-lm'; then
-    fail 'mlx update uses uv tool upgrade' "expected uv upgrade call, got: $(cat "$uv_log")"
+  if ! assert_contains "$(cat "$uv_log")" 'tool install --force --reinstall git+https://github.com/ml-explore/mlx-lm.git@main'; then
+    fail 'mlx update refreshes uv Git install' "expected uv forced Git reinstall call, got: $(cat "$uv_log")"
     return
   fi
 
-  pass 'mlx update uses uv tool upgrade'
+  pass 'mlx update refreshes uv Git install'
+}
+
+test_mlx_versions_reports_git_revision() {
+  local stdout_file="${TEST_DIR}/stdout"
+  local stderr_file="${TEST_DIR}/stderr"
+  local uv_root="${TEST_DIR}/uv-tools"
+  local metadata_dir="${uv_root}/mlx-lm/lib/python3.12/site-packages/mlx_lm-0.31.3.dist-info"
+
+  mkdir -p "$metadata_dir"
+  cat >"${metadata_dir}/direct_url.json" <<'EOF'
+{
+  "url": "https://github.com/ml-explore/mlx-lm",
+  "vcs_info": {
+    "vcs": "git",
+    "requested_revision": "main",
+    "commit_id": "0123456789abcdef0123456789abcdef01234567"
+  }
+}
+EOF
+
+  cat >"${TEST_DIR}/bin/mlx_lm.generate" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "${TEST_DIR}/bin/mlx_lm.generate"
+
+  cat >"${TEST_DIR}/bin/python3" <<'EOF'
+#!/usr/bin/env bash
+echo "0.31.3"
+EOF
+  chmod +x "${TEST_DIR}/bin/python3"
+
+  cat >"${TEST_DIR}/bin/uv" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "tool" && "$2" == "dir" ]]; then
+  printf '%s\n' "$CORRAL_TEST_UV_TOOLS"
+  exit 0
+fi
+exit 1
+EOF
+  chmod +x "${TEST_DIR}/bin/uv"
+  export CORRAL_TEST_UV_TOOLS="$uv_root"
+
+  run_cmd "$stdout_file" "$stderr_file" bash "$SCRIPT_PATH" versions --backend mlx
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    fail 'mlx versions reports Git revision' "versions failed: $(cat "$stderr_file")"
+    return
+  fi
+
+  if ! assert_contains "$(cat "$stdout_file")" '0.31.3 (main@0123456)'; then
+    fail 'mlx versions reports Git revision' "expected version and revision output, got: $(cat "$stdout_file")"
+    return
+  fi
+
+  pass 'mlx versions reports Git revision'
 }
 
 test_mlx_versions_reports_installed_version() {
@@ -5836,8 +5892,8 @@ test_combined_install_uses_homebrew_for_uv() {
     return
   fi
 
-  if ! assert_contains "$(cat "$uv_log")" 'tool install mlx-lm'; then
-    fail 'combined install continues with mlx install after Homebrew uv' "expected uv tool install mlx-lm call, got: $(cat "$uv_log")"
+  if ! assert_contains "$(cat "$uv_log")" 'tool install git+https://github.com/ml-explore/mlx-lm.git@main'; then
+    fail 'combined install continues with mlx install after Homebrew uv' "expected uv Git install call, got: $(cat "$uv_log")"
     return
   fi
 
@@ -6191,10 +6247,13 @@ main() {
     test_mlx_remove_fails_when_model_in_use_by_chat
 
     setup_test_env
-    test_mlx_update_uses_uv_upgrade
+    test_mlx_update_refreshes_git_install
 
     setup_test_env
     test_mlx_versions_reports_installed_version
+
+    setup_test_env
+    test_mlx_versions_reports_git_revision
 
     setup_test_env
     test_mlx_versions_fallbacks_to_uv_tool_list
