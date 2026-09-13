@@ -105,7 +105,7 @@ Commands:
   copy (cp)            Copy a profile to a new profile, or a template to a new user template
   show <NAME>          Show details about a profile, template, or model
   status               Show installed backend, platform, and version info
-  update               Update backend components (llama.cpp release or mlx-lm package)
+  update               Update backend components (llama.cpp release or latest mlx-lm commit)
   versions             Show installed backend versions
   prune                Prune old llama.cpp installs (keeps current version)
   uninstall            Uninstall backend components and optional caches

@@ -3,6 +3,7 @@
 # Provides:
 #   - Private runtime utilities: _clear_macos_quarantine(), _detect_arch(),
 #     _github_get(), _get_release_json(), _get_latest_tag(),
+#     _mlx_lm_install(), _mlx_lm_revision(),
 #     _delete_hf_model_cache_dirs()
 #   - llama.cpp lifecycle: _do_install(), _update_llama(), _uninstall_llama_components()
 #   - MLX lifecycle: _do_install_mlx(), _update_mlx(), _uninstall_mlx_components()
@@ -36,6 +37,10 @@ cmd_run_usage() { _cmd_run_usage; }
 cmd_run() { _cmd_run "$@"; }
 cmd_serve_usage() { _cmd_serve_usage; }
 cmd_serve() { _cmd_serve "$@"; }
+
+# The MLX project publishes useful fixes between PyPI releases. Keep the
+# source in one place so install and update cannot drift apart.
+MLX_LM_GIT_SOURCE='git+https://github.com/ml-explore/mlx-lm.git@main'
 
 # macOS Gatekeeper places a quarantine extended attribute on files downloaded
 # from the internet, blocking execution until the user approves them in System
@@ -295,6 +300,33 @@ _ensure_uv_for_mlx() {
   return 1
 }
 
+# Install mlx-lm from the rolling upstream main branch. With no options this
+# is used for a first install; callers that need to replace an existing tool
+# environment add --force/--reinstall below.
+# shellcheck disable=SC2329
+_mlx_lm_install() {
+  uv tool install "$MLX_LM_GIT_SOURCE"
+}
+
+# Return the resolved Git commit for a uv-installed mlx-lm tool, if available.
+# uv records the requested source and resolved commit in the PEP 610
+# direct_url.json file inside the tool environment. This avoids importing
+# mlx_lm (which can fail in headless/no-Metal environments).
+# shellcheck disable=SC2329
+_mlx_lm_revision() {
+  command -v uv >/dev/null 2>&1 || return 0
+
+  local tool_dir metadata
+  tool_dir="$(uv tool dir 2>/dev/null || true)"
+  [[ -n "$tool_dir" && -d "$tool_dir/mlx-lm" ]] || return 0
+
+  metadata="$(find "$tool_dir/mlx-lm" -type f \
+    -path '*/mlx_lm-*.dist-info/direct_url.json' -print -quit 2>/dev/null || true)"
+  [[ -n "$metadata" ]] || return 0
+
+  jq -r '.vcs_info.commit_id // empty' "$metadata" 2>/dev/null || true
+}
+
 # Install the MLX backend (mlx-lm Python package).
 # Prefer uv to avoid pip issues with externally-managed Homebrew Python.
 # If uv is missing, optionally install it via Homebrew.
@@ -318,7 +350,7 @@ _do_install_mlx() {
     die "uv is required for MLX installation. Install uv first: https://docs.astral.sh/uv/"
   fi
 
-  uv tool install mlx-lm
+  _mlx_lm_install
   echo
   echo "Installed mlx-lm via uv."
 }
@@ -346,7 +378,7 @@ _try_install_mlx() {
     return 0
   fi
 
-  uv tool install mlx-lm
+  _mlx_lm_install
   echo
   echo "Installed mlx-lm via uv."
 }
@@ -455,8 +487,8 @@ Options:
   --no-shell-profile
                   Never edit your shell profile. Default: ask if interactive, skip otherwise.
 
-Checks whether a newer backend release/package exists and installs it if so.
-For mlx, upgrades mlx-lm via uv.
+Updates the selected backend to its latest available upstream build.
+For mlx, refreshes the latest mlx-lm commit from GitHub via uv.
 EOF
 }
 
@@ -471,7 +503,7 @@ _update_mlx() {
   fi
 
   echo "Updating mlx-lm via uv..."
-  uv tool upgrade mlx-lm
+  uv tool install --force --reinstall "$MLX_LM_GIT_SOURCE"
   echo "Done."
 }
 
@@ -494,7 +526,7 @@ _try_update_mlx() {
   fi
 
   echo "Updating mlx-lm via uv..."
-  uv tool upgrade mlx-lm
+  uv tool install --force --reinstall "$MLX_LM_GIT_SOURCE"
   echo "Done."
 }
 
@@ -625,10 +657,17 @@ _mlx_lm_version() {
   fi
 
   if [[ -z "$version" ]]; then
-    echo "unknown"
-  else
-    echo "$version"
+    version='unknown'
   fi
+
+  local revision
+  revision="$(_mlx_lm_revision)"
+  if [[ -n "$revision" ]]; then
+    revision="${revision:0:7}"
+    version="${version} (main@${revision})"
+  fi
+
+  echo "$version"
 }
 
 _cmd_status() {
@@ -930,7 +969,7 @@ Usage: $SCRIPT_NAME versions [--backend <mlx|llama.cpp>] [--path <installation_r
 
 Shows installed backend versions.
 Without --backend, shows all installed backends for this platform.
-For --backend mlx, prints only the installed mlx-lm package version.
+For --backend mlx, prints the installed mlx-lm package version and Git revision when available.
 For --backend llama.cpp, lists all installed llama.cpp release versions.
 
 Options:
