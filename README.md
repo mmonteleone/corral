@@ -1,8 +1,8 @@
 # Corral ✨🦙
 
-Run local models with the ease of [Ollama](https://ollama.com) and full power of official [llama.cpp](https://github.com/ggml-org/llama.cpp) releases and [MLX](https://github.com/ml-explore/mlx-lm) on Apple Silicon.
+Run local models with the ease of [Ollama](https://ollama.com) and full power of official latest [llama.cpp](https://github.com/ggml-org/llama.cpp) and [MLX](https://github.com/ml-explore/mlx-lm) builds on Apple Silicon.
 
-**Corral is just a shell script**. It installs and updates the latest official llama.cpp builds and the latest MLX (`mlx-lm`) main-branch commit, uses the standard Hugging Face registry for models, and provides an Ollama-style CLI for running and managing local models: *search*, *pull*, *run*, *serve*, *launch*, *list*, *remove*, *update*, etc. along with templated usage profiles and tool launchers.
+**Corral is just a shell script**. It installs and updates the latest official llama.cpp builds and the latest MLX (`mlx-lm`) main-branch commits, uses the standard Hugging Face registry for models, and provides an Ollama-style CLI for running and managing local models: *search*, *pull*, *run*, *serve*, *launch*, *list*, *remove*, *update*, etc. along with templated usage profiles and tool launchers.
 
 ```sh
 corral search gemma
@@ -13,7 +13,7 @@ corral launch pi
 ![screenshot of corral's list command](./images/corral-list.png)
 ## Why Corral?
 
-- Upstream, official llama.cpp and MLX builds, with their latest performance benefits and model support (*ahem*, [Gemma 4](https://deepmind.google/models/gemma/gemma-4/)) vs downstream integrations and forks
+- Upstream, official llama.cpp and MLX builds, with their latest performance benefits and model support vs downstream integrations and forks
 - Ollama-style ergonomics for running *and* managing local models, without an always-on daemon
 - The full Hugging Face model registry, not just what Ollama ships
 - Model search and discovery against Hugging Face from the command line
